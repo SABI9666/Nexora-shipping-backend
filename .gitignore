@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+*.env.local
+service-account-key.json
+*.key.json
+prisma/migrations/
+*.tsbuildinfo

@@ -1,0 +1,31 @@
+# Render.com deployment configuration for Nexora Shipping Backend
+# Docs: https://render.com/docs/render-yaml
+
+services:
+  - type: web
+    name: nexora-shipping-api
+    env: node
+    region: oregon
+    plan: starter
+    buildCommand: npm install && npm run db:generate && npm run build && npm run db:migrate
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 8080
+      - key: DATABASE_URL
+        sync: false   # Set manually in Render dashboard (Google Cloud SQL connection string)
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: FRONTEND_URL
+        sync: false   # e.g. https://nexora-shipping.vercel.app
+      - key: GOOGLE_CLOUD_PROJECT_ID
+        sync: false
+      - key: GCS_BUCKET_NAME
+        sync: false
+      - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
+        sync: false   # Paste entire service account JSON as a string
