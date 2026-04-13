@@ -221,6 +221,7 @@ export const getOrderStats = async (req: AuthRequest, res: Response, next: NextF
         by: ['status'],
         where: userId ? { userId } : {},
         _count: true,
+        orderBy: { status: 'asc' },
       }),
       prisma.order.aggregate({
         where: {

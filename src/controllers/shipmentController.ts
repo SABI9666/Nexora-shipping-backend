@@ -183,6 +183,7 @@ export const getShipmentStats = async (req: AuthRequest, res: Response, next: Ne
         by: ['status'],
         where: userId ? { userId } : {},
         _count: true,
+        orderBy: { status: 'asc' },
       }),
       prisma.shipment.count({
         where: {
