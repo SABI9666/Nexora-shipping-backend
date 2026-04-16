@@ -8,7 +8,7 @@ services:
     region: oregon
     plan: starter
     buildCommand: npm install --include=dev && npm run build
-    startCommand: npm run db:migrate && npm start
+    startCommand: npx prisma db push && npm start
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
