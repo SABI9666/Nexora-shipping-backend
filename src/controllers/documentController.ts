@@ -17,27 +17,29 @@ export const uploadDocument = async (req: AuthRequest, res: Response, next: Next
       throw new AppError(`Invalid document type. Must be one of: ${DOCUMENT_TYPES.join(', ')}`, 400);
     }
 
-    if (!orderId && !shipmentId) {
-      throw new AppError('Either orderId or shipmentId is required', 400);
-    }
-
-    // Verify access to the order/shipment
     const isAdmin = req.user!.role === Role.ADMIN;
+
+    // Verify access to the order/shipment only if IDs are provided
     if (orderId) {
       const order = await prisma.order.findFirst({
         where: { id: orderId, ...(isAdmin ? {} : { userId: req.user!.id }) },
       });
-      if (!order) throw new AppError('Order not found', 404);
+      if (!order) throw new AppError('Order not found or access denied', 404);
     }
 
     if (shipmentId) {
       const shipment = await prisma.shipment.findFirst({
         where: { id: shipmentId, ...(isAdmin ? {} : { userId: req.user!.id }) },
       });
-      if (!shipment) throw new AppError('Shipment not found', 404);
+      if (!shipment) throw new AppError('Shipment not found or access denied', 404);
     }
 
-    const folder = orderId ? `orders/${orderId}` : `shipments/${shipmentId}`;
+    const folder = orderId
+      ? `orders/${orderId}`
+      : shipmentId
+      ? `shipments/${shipmentId}`
+      : `users/${req.user!.id}`;
+
     const { url, gcsPath } = await uploadFileToGCS(
       req.file.buffer,
       req.file.originalname,
