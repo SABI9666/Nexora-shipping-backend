@@ -25,6 +25,9 @@ const createOrderSchema = z.object({
 const updateOrderSchema = z.object({
   status: z.nativeEnum(OrderStatus).optional(),
   specialInstructions: z.string().optional(),
+  packageDescription: z.string().min(5).optional(),
+  weight: z.number().positive().max(1000).optional(),
+  declaredValue: z.number().positive().optional(),
 });
 
 export const createOrder = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
@@ -240,6 +243,18 @@ export const getOrderStats = async (req: AuthRequest, res: Response, next: NextF
         totalRevenue: revenue._sum.price ?? 0,
       },
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const deleteOrder = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const order = await prisma.order.findUnique({ where: { id } });
+    if (!order) throw new AppError('Order not found', 404);
+    await prisma.order.delete({ where: { id } });
+    res.json({ success: true, message: 'Order deleted successfully' });
   } catch (error) {
     next(error);
   }

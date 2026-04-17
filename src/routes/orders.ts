@@ -7,6 +7,7 @@ import {
   updateOrder,
   confirmOrder,
   getOrderStats,
+  deleteOrder,
 } from '../controllers/orderController';
 
 const router = Router();
@@ -19,5 +20,6 @@ router.post('/', createOrder);
 router.get('/:id', getOrder);
 router.patch('/:id', updateOrder);
 router.post('/:id/confirm', confirmOrder);
+router.delete('/:id', authorize('ADMIN'), deleteOrder);
 
 export default router;
