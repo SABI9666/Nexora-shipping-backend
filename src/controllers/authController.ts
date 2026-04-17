@@ -152,6 +152,55 @@ export const logout = async (req: AuthRequest, res: Response, next: NextFunction
   }
 };
 
+export const adminLogin = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { email, password } = loginSchema.parse(req.body);
+
+    const adminEmail = process.env.ADMIN_EMAIL;
+    const adminPassword = process.env.ADMIN_PASSWORD;
+
+    if (!adminEmail || !adminPassword) {
+      res.status(503).json({ success: false, message: 'Admin portal not configured. Set ADMIN_EMAIL and ADMIN_PASSWORD in server environment.' });
+      return;
+    }
+
+    if (email !== adminEmail || password !== adminPassword) {
+      res.status(401).json({ success: false, message: 'Invalid admin credentials' });
+      return;
+    }
+
+    let user = await prisma.user.findUnique({ where: { email } });
+
+    if (!user) {
+      const hashed = await bcrypt.hash(password, 12);
+      user = await prisma.user.create({
+        data: { email, password: hashed, firstName: 'Nexora', lastName: 'Admin', role: 'ADMIN' },
+      });
+    } else if (user.role !== 'ADMIN') {
+      user = await prisma.user.update({ where: { id: user.id }, data: { role: 'ADMIN' } });
+    }
+
+    const { accessToken, refreshToken } = generateTokens({ id: user.id, email: user.email, role: 'ADMIN' });
+    await prisma.user.update({ where: { id: user.id }, data: { refreshToken } });
+
+    res.json({
+      success: true,
+      message: 'Admin login successful',
+      data: {
+        user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, role: 'ADMIN' as const, isVerified: user.isVerified, createdAt: user.createdAt.toISOString() },
+        accessToken,
+        refreshToken,
+      },
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ success: false, message: error.errors[0].message });
+      return;
+    }
+    next(error);
+  }
+};
+
 export const makeAdmin = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { email, secret } = req.body;

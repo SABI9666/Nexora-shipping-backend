@@ -31,3 +31,7 @@ services:
         sync: false   # Paste entire service account JSON as a string
       - key: ADMIN_SETUP_SECRET
         sync: false   # A secret string you choose; used once to promote your account to ADMIN
+      - key: ADMIN_EMAIL
+        sync: false   # e.g. admin@nexorashipping.com  — the only email allowed to use admin login
+      - key: ADMIN_PASSWORD
+        sync: false   # e.g. MySecureAdminPass@2026  — plain text admin password checked server-side
