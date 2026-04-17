@@ -29,3 +29,5 @@ services:
         sync: false
       - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
         sync: false   # Paste entire service account JSON as a string
+      - key: ADMIN_SETUP_SECRET
+        sync: false   # A secret string you choose; used once to promote your account to ADMIN

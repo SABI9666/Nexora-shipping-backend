@@ -152,6 +152,31 @@ export const logout = async (req: AuthRequest, res: Response, next: NextFunction
   }
 };
 
+export const makeAdmin = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { email, secret } = req.body;
+    const adminSecret = process.env.ADMIN_SETUP_SECRET;
+
+    if (!adminSecret || secret !== adminSecret) {
+      res.status(403).json({ success: false, message: 'Invalid setup secret' });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) throw new AppError('User not found', 404);
+
+    const updated = await prisma.user.update({
+      where: { email },
+      data: { role: 'ADMIN' },
+      select: { id: true, email: true, firstName: true, lastName: true, role: true },
+    });
+
+    res.json({ success: true, message: `${updated.firstName} is now ADMIN`, data: updated });
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const getMe = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const user = await prisma.user.findUnique({
