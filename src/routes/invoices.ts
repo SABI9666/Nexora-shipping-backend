@@ -9,6 +9,7 @@ import {
 } from '../controllers/invoiceController';
 
 const router = Router();
+router.get('/:id/download/word', downloadInvoiceWord);
 
 router.use(authenticate);
 
