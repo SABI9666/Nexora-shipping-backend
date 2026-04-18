@@ -5,6 +5,7 @@ import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../types';
 import { generateInvoiceNumber, paginate } from '../utils/helpers';
+import { generateInvoiceWordBuffer } from '../utils/wordGenerator';
 
 const invoiceItemSchema = z.object({
   description: z.string().min(1),
@@ -260,6 +261,31 @@ export const deleteInvoice = async (req: AuthRequest, res: Response, next: NextF
 
     await prisma.invoice.delete({ where: { id } });
     res.json({ success: true, message: 'Invoice deleted' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const downloadInvoiceWord = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const isAdmin = req.user!.role === Role.ADMIN;
+
+    const invoice = await prisma.invoice.findFirst({
+      where: { id, ...(isAdmin ? {} : { userId: req.user!.id }) },
+      include: {
+        items: true,
+        orderRef: { select: { orderNumber: true } },
+      },
+    });
+
+    if (!invoice) throw new AppError('Invoice not found', 404);
+
+    const buffer = await generateInvoiceWordBuffer(invoice);
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${invoice.invoiceNumber}.docx"`);
+    res.send(buffer);
   } catch (error) {
     next(error);
   }
