@@ -13,6 +13,7 @@ import shipmentRoutes from './routes/shipments';
 import documentRoutes from './routes/documents';
 import userRoutes from './routes/users';
 import invoiceRoutes from './routes/invoices';
+import quotationRoutes from './routes/quotations';
 import { errorHandler } from './middleware/errorHandler';
 
 const app = express();
@@ -93,6 +94,7 @@ app.use('/api/shipments', shipmentRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/invoices', invoiceRoutes);
+app.use('/api/quotations', quotationRoutes);
 
 // 404 handler
 app.use('*', (_req, res) => {
