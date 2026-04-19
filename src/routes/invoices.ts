@@ -6,7 +6,7 @@ import {
   getInvoice,
   updateInvoice,
   deleteInvoice,
-  downloadInvoiceDocx,
+  downloadInvoiceWord,
 } from '../controllers/invoiceController';
 
 const router = Router();
@@ -15,8 +15,8 @@ router.use(authenticate);
 
 router.get('/', getInvoices);
 router.post('/', createInvoice);
+router.get('/:id/download/word', downloadInvoiceWord);
 router.get('/:id', getInvoice);
-router.get('/:id/docx', downloadInvoiceDocx);
 router.patch('/:id', updateInvoice);
 router.delete('/:id', deleteInvoice);
 
