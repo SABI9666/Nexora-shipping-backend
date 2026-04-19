@@ -1,4 +1,5 @@
 import express from 'express';
+import path from 'path';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -19,7 +20,7 @@ import { errorHandler } from './middleware/errorHandler';
 const app = express();
 
 // Security middleware
-app.use(helmet());
+app.use(helmet({ crossOriginResourcePolicy: false }));
 app.set('trust proxy', 1); // Required for Render (behind proxy)
 
 // CORS - allow Vercel frontend + local dev
@@ -71,6 +72,15 @@ app.use('/api/auth/register', authLimiter);
 // Body parsing
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Static branding assets (header.png, footer.png, watermark.png) for docx exports
+app.use(
+  '/branding',
+  express.static(path.join(process.cwd(), 'public', 'branding'), {
+    maxAge: '7d',
+    fallthrough: true,
+  })
+);
 
 // Logging
 if (process.env.NODE_ENV !== 'test') {
