@@ -5,13 +5,7 @@ import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../types';
 import { generateQuotationNumber, paginate } from '../utils/helpers';
-import {
-  brandingBaseUrl,
-  brandingHeaderHtml,
-  brandingFooterHtml,
-  brandingWatermarkHtml,
-  brandingHeadStyles,
-} from '../utils/docxBranding';
+import { generateQuotationWordBuffer } from '../utils/quotationWordGenerator';
 
 const quotationItemSchema = z.object({
   description: z.string().min(1),
@@ -272,142 +266,22 @@ export const deleteQuotation = async (req: AuthRequest, res: Response, next: Nex
   }
 };
 
-function escapeHtml(str: string): string {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function fmtMoney(n: number, currency: string): string {
-  return `${currency} ${n.toFixed(2)}`;
-}
-
-function fmtDate(d: Date | string | null | undefined): string {
-  if (!d) return '—';
-  const date = new Date(d);
-  return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: '2-digit' });
-}
-
-export const downloadQuotationDocx = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+export const downloadQuotationWord = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
     const isAdmin = req.user!.role === Role.ADMIN;
 
-    const q = await prisma.quotation.findFirst({
+    const quotation = await prisma.quotation.findFirst({
       where: { id, ...(isAdmin ? {} : { userId: req.user!.id }) },
-      include: {
-        items: true,
-        orderRef: { select: { orderNumber: true } },
-      },
+      include: { items: true, orderRef: { select: { orderNumber: true } } },
     });
-    if (!q) throw new AppError('Quotation not found', 404);
 
-    const baseUrl = brandingBaseUrl(req);
+    if (!quotation) throw new AppError('Quotation not found', 404);
 
-    const rows = q.items
-      .map(
-        (it) => `
-      <tr>
-        <td style="padding:8px;border:1px solid #ccc;">${escapeHtml(it.description)}</td>
-        <td style="padding:8px;border:1px solid #ccc;text-align:right;">${it.quantity}</td>
-        <td style="padding:8px;border:1px solid #ccc;text-align:right;">${fmtMoney(it.unitPrice, q.currency)}</td>
-        <td style="padding:8px;border:1px solid #ccc;text-align:right;"><b>${fmtMoney(it.amount, q.currency)}</b></td>
-      </tr>`
-      )
-      .join('');
+    const buffer = await generateQuotationWordBuffer(quotation);
 
-    const body = `
-      ${brandingWatermarkHtml(baseUrl)}
-      ${brandingHeaderHtml(baseUrl)}
-
-      <div style="padding:0 24px;">
-        <table width="100%" style="margin-bottom:18px;"><tr>
-          <td>
-            <div style="font-size:11px;color:#64748b;">${escapeHtml(q.shipFromName)}</div>
-            <div style="font-size:11px;color:#64748b;">${escapeHtml(q.shipFromAddress)}, ${escapeHtml(q.shipFromCity)}, ${escapeHtml(q.shipFromCountry)}</div>
-          </td>
-          <td align="right">
-            <div style="font-size:24px;font-weight:bold;color:#1e3a5f;">QUOTATION</div>
-            <div style="font-size:13px;font-weight:bold;">${escapeHtml(q.quotationNumber)}</div>
-            <div style="font-size:11px;color:#64748b;">Date: ${fmtDate(q.quotationDate)}</div>
-            <div style="font-size:11px;color:#64748b;">Valid Until: ${fmtDate(q.validUntil)}</div>
-            <div style="font-size:11px;color:#64748b;">Status: ${q.status}</div>
-          </td>
-        </tr></table>
-
-        <hr style="border:0;border-top:2px solid #1e3a5f;margin-bottom:16px;"/>
-
-        <table width="100%" style="margin-bottom:18px;"><tr>
-          <td width="50%" valign="top">
-            <div style="font-size:10px;color:#94a3b8;font-weight:bold;text-transform:uppercase;margin-bottom:6px;">From</div>
-            <div style="font-weight:bold;">${escapeHtml(q.shipFromName)}</div>
-            <div style="color:#475569;">${escapeHtml(q.shipFromAddress)}</div>
-            <div style="color:#475569;">${escapeHtml(q.shipFromCity)}, ${escapeHtml(q.shipFromCountry)}</div>
-          </td>
-          <td width="50%" valign="top" style="background:#f8fafc;padding:12px;">
-            <div style="font-size:10px;color:#94a3b8;font-weight:bold;text-transform:uppercase;margin-bottom:6px;">Quote To</div>
-            <div style="font-weight:bold;">${escapeHtml(q.billToName)}</div>
-            <div style="color:#475569;">${escapeHtml(q.billToAddress)}</div>
-            <div style="color:#475569;">${escapeHtml(q.billToCity)}, ${escapeHtml(q.billToCountry)}</div>
-            ${q.billToEmail ? `<div style="color:#94a3b8;font-size:11px;">${escapeHtml(q.billToEmail)}</div>` : ''}
-            ${q.billToPhone ? `<div style="color:#94a3b8;font-size:11px;">${escapeHtml(q.billToPhone)}</div>` : ''}
-          </td>
-        </tr></table>
-
-        ${q.orderRef ? `<div style="background:#eff6ff;padding:8px 12px;margin-bottom:14px;color:#1d4ed8;font-size:12px;">Order Reference: <b>${escapeHtml(q.orderRef.orderNumber)}</b></div>` : ''}
-
-        <table width="100%" style="border-collapse:collapse;margin-bottom:18px;">
-          <thead>
-            <tr style="background:#1e3a5f;color:#fff;">
-              <th style="padding:10px;text-align:left;font-size:11px;">DESCRIPTION</th>
-              <th style="padding:10px;text-align:right;font-size:11px;">QTY</th>
-              <th style="padding:10px;text-align:right;font-size:11px;">UNIT PRICE</th>
-              <th style="padding:10px;text-align:right;font-size:11px;">AMOUNT</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-
-        <table width="100%"><tr><td></td><td width="280">
-          <table width="100%">
-            <tr><td style="color:#64748b;">Subtotal</td><td align="right">${fmtMoney(q.subtotal, q.currency)}</td></tr>
-            ${q.taxRate > 0 ? `<tr><td style="color:#64748b;">Tax (${q.taxRate}%)</td><td align="right">${fmtMoney(q.taxAmount, q.currency)}</td></tr>` : ''}
-            ${q.shippingCost > 0 ? `<tr><td style="color:#64748b;">Shipping</td><td align="right">${fmtMoney(q.shippingCost, q.currency)}</td></tr>` : ''}
-            <tr style="border-top:2px solid #1e3a5f;">
-              <td style="padding-top:8px;font-weight:bold;font-size:14px;">Total (${q.currency})</td>
-              <td align="right" style="padding-top:8px;font-weight:bold;font-size:14px;color:#1e3a5f;">${fmtMoney(q.total, q.currency)}</td>
-            </tr>
-          </table>
-        </td></tr></table>
-
-        ${q.terms ? `<div style="margin-top:20px;font-size:11px;color:#64748b;"><b>Terms &amp; Conditions:</b><br/>${escapeHtml(q.terms)}</div>` : ''}
-        ${q.notes ? `<div style="margin-top:10px;font-size:11px;color:#64748b;"><b>Notes:</b><br/>${escapeHtml(q.notes)}</div>` : ''}
-      </div>
-
-      ${brandingFooterHtml(baseUrl)}
-    `;
-
-    const docx = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
-<head>
-  <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
-  <meta name="ProgId" content="Word.Document"/>
-  <meta name="Generator" content="Microsoft Word 15"/>
-  <title>${escapeHtml(q.quotationNumber)}</title>
-  <!--[if gte mso 9]><xml>
-    <w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument>
-  </xml><![endif]-->
-  ${brandingHeadStyles()}
-</head>
-<body>${body}</body>
-</html>`;
-
-    const buffer = Buffer.from('\ufeff' + docx, 'utf8');
-    res.setHeader('Content-Type', 'application/msword');
-    res.setHeader('Content-Disposition', `attachment; filename="${q.quotationNumber}.doc"`);
-    res.setHeader('Content-Length', String(buffer.length));
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${quotation.quotationNumber}.docx"`);
     res.send(buffer);
   } catch (error) {
     next(error);
