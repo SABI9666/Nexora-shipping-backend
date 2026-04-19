@@ -83,6 +83,7 @@ export type WordInvoice = {
 };
 
 export async function generateInvoiceWordBuffer(invoice: WordInvoice): Promise<Buffer> {
+  // ── Header: Company | INVOICE ──
   const headerTable = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     borders: TABLE_NO_BORDER,
@@ -114,12 +115,14 @@ export async function generateInvoiceWordBuffer(invoice: WordInvoice): Promise<B
     ],
   });
 
+  // ── Navy divider ──
   const divider = new Paragraph({
     border: { bottom: { style: BorderStyle.THICK, size: 12, color: C.NAVY } },
     children: [],
     spacing: { before: 200, after: 200 },
   });
 
+  // ── From / Bill To ──
   const fromToTable = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     borders: TABLE_NO_BORDER,
@@ -154,6 +157,7 @@ export async function generateInvoiceWordBuffer(invoice: WordInvoice): Promise<B
     ],
   });
 
+  // ── Meta row ──
   const metaTable = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     borders: TABLE_NO_BORDER,
@@ -179,6 +183,7 @@ export async function generateInvoiceWordBuffer(invoice: WordInvoice): Promise<B
     ],
   });
 
+  // ── Order ref ──
   const orderRefPara = invoice.orderRef
     ? new Paragraph({
         shading: { type: ShadingType.CLEAR, color: 'auto', fill: C.BLUE_BG },
@@ -190,6 +195,7 @@ export async function generateInvoiceWordBuffer(invoice: WordInvoice): Promise<B
       })
     : null;
 
+  // ── Line items table ──
   const colWidths = [60, 10, 15, 15];
   const itemsTable = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
@@ -224,6 +230,7 @@ export async function generateInvoiceWordBuffer(invoice: WordInvoice): Promise<B
     ],
   });
 
+  // ── Totals (right-aligned via wrapper) ──
   const totalsData = [
     { label: 'Subtotal',                      value: fmtNum(invoice.subtotal),      isFinal: false },
     ...(invoice.taxRate > 0      ? [{ label: `Tax (${invoice.taxRate}%)`, value: fmtNum(invoice.taxAmount),   isFinal: false }] : []),
@@ -249,6 +256,7 @@ export async function generateInvoiceWordBuffer(invoice: WordInvoice): Promise<B
     }),
   });
 
+  // ── Footer ──
   const footerParas: Paragraph[] = [
     new Paragraph({
       border: { top: { style: BorderStyle.SINGLE, size: 4, color: C.BORDER } },
