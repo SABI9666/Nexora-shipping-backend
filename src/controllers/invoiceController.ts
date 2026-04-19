@@ -5,13 +5,7 @@ import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../types';
 import { generateInvoiceNumber, paginate } from '../utils/helpers';
-import {
-  brandingBaseUrl,
-  brandingHeaderHtml,
-  brandingFooterHtml,
-  brandingWatermarkHtml,
-  brandingHeadStyles,
-} from '../utils/docxBranding';
+import { generateInvoiceWordBuffer } from '../utils/wordGenerator';
 
 const invoiceItemSchema = z.object({
   description: z.string().min(1),
@@ -272,139 +266,25 @@ export const deleteInvoice = async (req: AuthRequest, res: Response, next: NextF
   }
 };
 
-function escapeHtml(str: string): string {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function fmtMoney(n: number, currency: string): string {
-  return `${currency} ${n.toFixed(2)}`;
-}
-
-function fmtDate(d: Date | string | null | undefined): string {
-  if (!d) return '—';
-  const date = new Date(d);
-  return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: '2-digit' });
-}
-
-export const downloadInvoiceDocx = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+export const downloadInvoiceWord = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
     const isAdmin = req.user!.role === Role.ADMIN;
 
-    const inv = await prisma.invoice.findFirst({
+    const invoice = await prisma.invoice.findFirst({
       where: { id, ...(isAdmin ? {} : { userId: req.user!.id }) },
-      include: { items: true, orderRef: { select: { orderNumber: true } } },
+      include: {
+        items: true,
+        orderRef: { select: { orderNumber: true } },
+      },
     });
-    if (!inv) throw new AppError('Invoice not found', 404);
 
-    const baseUrl = brandingBaseUrl(req);
+    if (!invoice) throw new AppError('Invoice not found', 404);
 
-    const rows = inv.items
-      .map(
-        (it) => `
-      <tr>
-        <td style="padding:8px;border:1px solid #ccc;">${escapeHtml(it.description)}</td>
-        <td style="padding:8px;border:1px solid #ccc;text-align:right;">${it.quantity}</td>
-        <td style="padding:8px;border:1px solid #ccc;text-align:right;">${fmtMoney(it.unitPrice, inv.currency)}</td>
-        <td style="padding:8px;border:1px solid #ccc;text-align:right;"><b>${fmtMoney(it.amount, inv.currency)}</b></td>
-      </tr>`
-      )
-      .join('');
+    const buffer = await generateInvoiceWordBuffer(invoice);
 
-    const body = `
-      ${brandingWatermarkHtml(baseUrl)}
-      ${brandingHeaderHtml(baseUrl)}
-
-      <div style="padding:0 24px;">
-        <table width="100%" style="margin-bottom:18px;"><tr>
-          <td>
-            <div style="font-size:11px;color:#64748b;">${escapeHtml(inv.shipFromName)}</div>
-            <div style="font-size:11px;color:#64748b;">${escapeHtml(inv.shipFromAddress)}, ${escapeHtml(inv.shipFromCity)}, ${escapeHtml(inv.shipFromCountry)}</div>
-          </td>
-          <td align="right">
-            <div style="font-size:24px;font-weight:bold;color:#1e3a5f;">INVOICE</div>
-            <div style="font-size:13px;font-weight:bold;">${escapeHtml(inv.invoiceNumber)}</div>
-            <div style="font-size:11px;color:#64748b;">Date: ${fmtDate(inv.invoiceDate)}</div>
-            ${inv.dueDate ? `<div style="font-size:11px;color:#64748b;">Due: ${fmtDate(inv.dueDate)}</div>` : ''}
-            <div style="font-size:11px;color:#64748b;">Status: ${inv.status}</div>
-          </td>
-        </tr></table>
-
-        <hr style="border:0;border-top:2px solid #1e3a5f;margin-bottom:16px;"/>
-
-        <table width="100%" style="margin-bottom:18px;"><tr>
-          <td width="50%" valign="top">
-            <div style="font-size:10px;color:#94a3b8;font-weight:bold;text-transform:uppercase;margin-bottom:6px;">From</div>
-            <div style="font-weight:bold;">${escapeHtml(inv.shipFromName)}</div>
-            <div style="color:#475569;">${escapeHtml(inv.shipFromAddress)}</div>
-            <div style="color:#475569;">${escapeHtml(inv.shipFromCity)}, ${escapeHtml(inv.shipFromCountry)}</div>
-          </td>
-          <td width="50%" valign="top" style="background:#f8fafc;padding:12px;">
-            <div style="font-size:10px;color:#94a3b8;font-weight:bold;text-transform:uppercase;margin-bottom:6px;">Bill To</div>
-            <div style="font-weight:bold;">${escapeHtml(inv.billToName)}</div>
-            <div style="color:#475569;">${escapeHtml(inv.billToAddress)}</div>
-            <div style="color:#475569;">${escapeHtml(inv.billToCity)}, ${escapeHtml(inv.billToCountry)}</div>
-            ${inv.billToEmail ? `<div style="color:#94a3b8;font-size:11px;">${escapeHtml(inv.billToEmail)}</div>` : ''}
-            ${inv.billToPhone ? `<div style="color:#94a3b8;font-size:11px;">${escapeHtml(inv.billToPhone)}</div>` : ''}
-          </td>
-        </tr></table>
-
-        ${inv.orderRef ? `<div style="background:#eff6ff;padding:8px 12px;margin-bottom:14px;color:#1d4ed8;font-size:12px;">Order Reference: <b>${escapeHtml(inv.orderRef.orderNumber)}</b></div>` : ''}
-
-        <table width="100%" style="border-collapse:collapse;margin-bottom:18px;">
-          <thead>
-            <tr style="background:#1e3a5f;color:#fff;">
-              <th style="padding:10px;text-align:left;font-size:11px;">DESCRIPTION</th>
-              <th style="padding:10px;text-align:right;font-size:11px;">QTY</th>
-              <th style="padding:10px;text-align:right;font-size:11px;">UNIT PRICE</th>
-              <th style="padding:10px;text-align:right;font-size:11px;">AMOUNT</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-
-        <table width="100%"><tr><td></td><td width="280">
-          <table width="100%">
-            <tr><td style="color:#64748b;">Subtotal</td><td align="right">${fmtMoney(inv.subtotal, inv.currency)}</td></tr>
-            ${inv.taxRate > 0 ? `<tr><td style="color:#64748b;">Tax (${inv.taxRate}%)</td><td align="right">${fmtMoney(inv.taxAmount, inv.currency)}</td></tr>` : ''}
-            ${inv.shippingCost > 0 ? `<tr><td style="color:#64748b;">Shipping</td><td align="right">${fmtMoney(inv.shippingCost, inv.currency)}</td></tr>` : ''}
-            <tr style="border-top:2px solid #1e3a5f;">
-              <td style="padding-top:8px;font-weight:bold;font-size:14px;">Total (${inv.currency})</td>
-              <td align="right" style="padding-top:8px;font-weight:bold;font-size:14px;color:#1e3a5f;">${fmtMoney(inv.total, inv.currency)}</td>
-            </tr>
-          </table>
-        </td></tr></table>
-
-        ${inv.paymentTerms ? `<div style="margin-top:20px;font-size:11px;color:#64748b;"><b>Payment Terms:</b> ${escapeHtml(inv.paymentTerms)}</div>` : ''}
-        ${inv.notes ? `<div style="margin-top:10px;font-size:11px;color:#64748b;"><b>Notes:</b><br/>${escapeHtml(inv.notes)}</div>` : ''}
-      </div>
-
-      ${brandingFooterHtml(baseUrl)}
-    `;
-
-    const docx = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
-<head>
-  <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
-  <meta name="ProgId" content="Word.Document"/>
-  <meta name="Generator" content="Microsoft Word 15"/>
-  <title>${escapeHtml(inv.invoiceNumber)}</title>
-  <!--[if gte mso 9]><xml>
-    <w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument>
-  </xml><![endif]-->
-  ${brandingHeadStyles()}
-</head>
-<body>${body}</body>
-</html>`;
-
-    const buffer = Buffer.from('\ufeff' + docx, 'utf8');
-    res.setHeader('Content-Type', 'application/msword');
-    res.setHeader('Content-Disposition', `attachment; filename="${inv.invoiceNumber}.doc"`);
-    res.setHeader('Content-Length', String(buffer.length));
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${invoice.invoiceNumber}.docx"`);
     res.send(buffer);
   } catch (error) {
     next(error);
