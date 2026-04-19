@@ -5,6 +5,13 @@ export function generateInvoiceNumber(): string {
   return `NEX${year}-${String(seq).padStart(5, '0')}`;
 }
 
+export function generateQuotationNumber(): string {
+  const date = new Date();
+  const year = String(date.getFullYear()).slice(2);
+  const seq = Math.floor(Math.random() * 90000) + 10000;
+  return `QT${year}-${String(seq).padStart(5, '0')}`;
+}
+
 export function generateOrderNumber(): string {
   const date = new Date();
   const year = date.getFullYear();
