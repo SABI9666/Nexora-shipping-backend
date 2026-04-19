@@ -6,7 +6,7 @@ import {
   getQuotation,
   updateQuotation,
   deleteQuotation,
-  downloadQuotationDocx,
+  downloadQuotationWord,
 } from '../controllers/quotationController';
 
 const router = Router();
@@ -15,8 +15,8 @@ router.use(authenticate);
 
 router.get('/', getQuotations);
 router.post('/', createQuotation);
+router.get('/:id/download/word', downloadQuotationWord);
 router.get('/:id', getQuotation);
-router.get('/:id/docx', downloadQuotationDocx);
 router.patch('/:id', updateQuotation);
 router.delete('/:id', deleteQuotation);
 
