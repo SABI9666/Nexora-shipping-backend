@@ -5,6 +5,13 @@ import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../types';
 import { generateQuotationNumber, paginate } from '../utils/helpers';
+import {
+  brandingBaseUrl,
+  brandingHeaderHtml,
+  brandingFooterHtml,
+  brandingWatermarkHtml,
+  brandingHeadStyles,
+} from '../utils/docxBranding';
 
 const quotationItemSchema = z.object({
   description: z.string().min(1),
@@ -298,6 +305,8 @@ export const downloadQuotationDocx = async (req: AuthRequest, res: Response, nex
     });
     if (!q) throw new AppError('Quotation not found', 404);
 
+    const baseUrl = brandingBaseUrl(req);
+
     const rows = q.items
       .map(
         (it) => `
@@ -311,15 +320,17 @@ export const downloadQuotationDocx = async (req: AuthRequest, res: Response, nex
       .join('');
 
     const body = `
-      <div style="font-family:Arial,Helvetica,sans-serif;color:#1e293b;padding:24px;">
-        <table width="100%" style="margin-bottom:24px;"><tr>
+      ${brandingWatermarkHtml(baseUrl)}
+      ${brandingHeaderHtml(baseUrl)}
+
+      <div style="padding:0 24px;">
+        <table width="100%" style="margin-bottom:18px;"><tr>
           <td>
-            <div style="font-size:22px;font-weight:bold;color:#0f172a;">NEXORA EXPRESS</div>
-            <div style="font-size:11px;color:#64748b;">nexorashipping.com</div>
+            <div style="font-size:11px;color:#64748b;">${escapeHtml(q.shipFromName)}</div>
             <div style="font-size:11px;color:#64748b;">${escapeHtml(q.shipFromAddress)}, ${escapeHtml(q.shipFromCity)}, ${escapeHtml(q.shipFromCountry)}</div>
           </td>
           <td align="right">
-            <div style="font-size:26px;font-weight:bold;color:#1e3a5f;">QUOTATION</div>
+            <div style="font-size:24px;font-weight:bold;color:#1e3a5f;">QUOTATION</div>
             <div style="font-size:13px;font-weight:bold;">${escapeHtml(q.quotationNumber)}</div>
             <div style="font-size:11px;color:#64748b;">Date: ${fmtDate(q.quotationDate)}</div>
             <div style="font-size:11px;color:#64748b;">Valid Until: ${fmtDate(q.validUntil)}</div>
@@ -327,9 +338,9 @@ export const downloadQuotationDocx = async (req: AuthRequest, res: Response, nex
           </td>
         </tr></table>
 
-        <hr style="border:0;border-top:2px solid #1e3a5f;margin-bottom:20px;"/>
+        <hr style="border:0;border-top:2px solid #1e3a5f;margin-bottom:16px;"/>
 
-        <table width="100%" style="margin-bottom:20px;"><tr>
+        <table width="100%" style="margin-bottom:18px;"><tr>
           <td width="50%" valign="top">
             <div style="font-size:10px;color:#94a3b8;font-weight:bold;text-transform:uppercase;margin-bottom:6px;">From</div>
             <div style="font-weight:bold;">${escapeHtml(q.shipFromName)}</div>
@@ -346,9 +357,9 @@ export const downloadQuotationDocx = async (req: AuthRequest, res: Response, nex
           </td>
         </tr></table>
 
-        ${q.orderRef ? `<div style="background:#eff6ff;padding:8px 12px;margin-bottom:16px;color:#1d4ed8;font-size:12px;">Order Reference: <b>${escapeHtml(q.orderRef.orderNumber)}</b></div>` : ''}
+        ${q.orderRef ? `<div style="background:#eff6ff;padding:8px 12px;margin-bottom:14px;color:#1d4ed8;font-size:12px;">Order Reference: <b>${escapeHtml(q.orderRef.orderNumber)}</b></div>` : ''}
 
-        <table width="100%" style="border-collapse:collapse;margin-bottom:20px;">
+        <table width="100%" style="border-collapse:collapse;margin-bottom:18px;">
           <thead>
             <tr style="background:#1e3a5f;color:#fff;">
               <th style="padding:10px;text-align:left;font-size:11px;">DESCRIPTION</th>
@@ -372,16 +383,14 @@ export const downloadQuotationDocx = async (req: AuthRequest, res: Response, nex
           </table>
         </td></tr></table>
 
-        ${q.terms ? `<div style="margin-top:24px;font-size:11px;color:#64748b;"><b>Terms &amp; Conditions:</b><br/>${escapeHtml(q.terms)}</div>` : ''}
-        ${q.notes ? `<div style="margin-top:12px;font-size:11px;color:#64748b;"><b>Notes:</b><br/>${escapeHtml(q.notes)}</div>` : ''}
-
-        <div style="margin-top:32px;font-size:10px;color:#94a3b8;text-align:center;border-top:1px solid #e2e8f0;padding-top:12px;">
-          This is a quotation only. Prices are valid until the date specified. Thank you for considering Nexora Express.
-        </div>
+        ${q.terms ? `<div style="margin-top:20px;font-size:11px;color:#64748b;"><b>Terms &amp; Conditions:</b><br/>${escapeHtml(q.terms)}</div>` : ''}
+        ${q.notes ? `<div style="margin-top:10px;font-size:11px;color:#64748b;"><b>Notes:</b><br/>${escapeHtml(q.notes)}</div>` : ''}
       </div>
+
+      ${brandingFooterHtml(baseUrl)}
     `;
 
-    const docx = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+    const docx = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
 <head>
   <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
   <meta name="ProgId" content="Word.Document"/>
@@ -390,7 +399,7 @@ export const downloadQuotationDocx = async (req: AuthRequest, res: Response, nex
   <!--[if gte mso 9]><xml>
     <w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument>
   </xml><![endif]-->
-  <style>@page { size: A4; margin: 1in; }</style>
+  ${brandingHeadStyles()}
 </head>
 <body>${body}</body>
 </html>`;
