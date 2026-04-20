@@ -44,6 +44,13 @@ enum InvoiceStatus {
   CANCELLED
 }
 
+enum AccountGroupType {
+  ASSET
+  LIABILITIES
+  PL
+  TRADING
+}
+
 model User {
   id           String   @id @default(uuid())
   email        String   @unique
@@ -141,7 +148,7 @@ model Document {
   size         Int
   url          String
   gcsPath      String
-  type         String   // invoice, bill_of_lading, customs, proof_of_delivery, other
+  type         String
   orderId      String?
   shipmentId   String?
   uploadedBy   String
@@ -161,7 +168,6 @@ model Invoice {
   invoiceDate   DateTime      @default(now())
   dueDate       DateTime?
 
-  // Bill To
   billToName    String
   billToAddress String
   billToCity    String
@@ -169,13 +175,11 @@ model Invoice {
   billToEmail   String?
   billToPhone   String?
 
-  // Ship From (company)
   shipFromName    String @default("Nexora Express")
   shipFromAddress String @default("1 Nexora Way")
   shipFromCity    String @default("London")
   shipFromCountry String @default("GB")
 
-  // Financial
   currency     String @default("USD")
   subtotal     Float  @default(0)
   taxRate      Float  @default(0)
@@ -183,11 +187,9 @@ model Invoice {
   shippingCost Float  @default(0)
   total        Float  @default(0)
 
-  // Meta
   paymentTerms String?
   notes        String?
 
-  // Relations
   orderId   String?
   userId    String
   createdAt DateTime @default(now())
@@ -211,4 +213,97 @@ model InvoiceItem {
   invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
   @@map("invoice_items")
+}
+
+model AccountGroup {
+  id         String           @id @default(uuid())
+  code       String           @unique
+  name       String
+  groupType  AccountGroupType
+  printOrder Int              @default(0)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  accounts Account[]
+
+  @@map("account_groups")
+}
+
+model CustomerGroup {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accounts Account[]
+
+  @@map("customer_groups")
+}
+
+model Account {
+  id              String  @id @default(uuid())
+  code            String  @unique
+  name            String
+  arabicName      String?
+  accountGroupId  String
+  destination     String?
+  address         String?
+  road            String?
+  place           String?
+  route           String?
+  subRoute        String?
+  phone1          String?
+  mobile1         String?
+  mobile2         String?
+  email           String?
+  financeEmail    String?
+  contactPerson   String?
+  acContactPerson String?
+  acMobileNo      String?
+  rep             String?
+  rep2            String?
+  opBalance       Float   @default(0)
+  opBalanceType   String  @default("Credit")
+  narration       String?
+  paymentTerms    String?
+  trn             String?
+  creditDays      Int     @default(0)
+  creditInvoices  Int     @default(0)
+  creditLimit     Float   @default(0)
+  customerGroupId String?
+  deliveryAddress String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  accountGroup  AccountGroup   @relation(fields: [accountGroupId], references: [id])
+  customerGroup CustomerGroup? @relation(fields: [customerGroupId], references: [id])
+  subAccounts   SubAccount[]
+
+  @@map("accounts")
+}
+
+model SubAccount {
+  id        String   @id @default(uuid())
+  code      String
+  name      String
+  accountId String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, code])
+  @@map("sub_accounts")
+}
+
+model ItemMaster {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  name      String
+  phone     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("item_masters")
 }
