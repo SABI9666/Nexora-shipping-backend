@@ -13,15 +13,17 @@ import shipmentRoutes from './routes/shipments';
 import documentRoutes from './routes/documents';
 import userRoutes from './routes/users';
 import invoiceRoutes from './routes/invoices';
+import accountGroupRoutes from './routes/accountGroups';
+import customerGroupRoutes from './routes/customerGroups';
+import accountRoutes from './routes/accounts';
+import itemMasterRoutes from './routes/itemMaster';
 import { errorHandler } from './middleware/errorHandler';
 
 const app = express();
 
-// Security middleware
 app.use(helmet());
-app.set('trust proxy', 1); // Required for Render (behind proxy)
+app.set('trust proxy', 1);
 
-// CORS - allow Vercel frontend + local dev
 const allowedOrigins = [
   process.env.FRONTEND_URL,
   'http://localhost:3000',
@@ -48,9 +50,8 @@ app.use(
   })
 );
 
-// Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 15 * 60 * 1000,
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
@@ -67,16 +68,13 @@ app.use('/api/', limiter);
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
 
-// Body parsing
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Logging
 if (process.env.NODE_ENV !== 'test') {
   app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 }
 
-// Health check
 app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
@@ -86,20 +84,21 @@ app.get('/health', (_req, res) => {
   });
 });
 
-// API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/shipments', shipmentRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/invoices', invoiceRoutes);
+app.use('/api/account-groups', accountGroupRoutes);
+app.use('/api/customer-groups', customerGroupRoutes);
+app.use('/api/accounts', accountRoutes);
+app.use('/api/items', itemMasterRoutes);
 
-// 404 handler
 app.use('*', (_req, res) => {
   res.status(404).json({ success: false, message: 'Route not found' });
 });
 
-// Global error handler
 app.use(errorHandler);
 
 const PORT = parseInt(process.env.PORT || '8080', 10);
