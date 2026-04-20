@@ -11,6 +11,10 @@ import {
   TextRun,
   WidthType,
 } from 'docx';
+import {
+  buildDocHeaderWithWatermark,
+  buildDocFooter,
+} from './docxImageBranding';
 
 const C = {
   NAVY: '1E3A5F',
@@ -93,17 +97,17 @@ export async function generateQuotationWordBuffer(q: WordQuotation): Promise<Buf
             borders: NO_BORDER,
             width: { size: 50, type: WidthType.PERCENTAGE },
             children: [
-              new Paragraph({ children: [new TextRun({ text: 'NEXORA EXPRESS', bold: true, size: 52, color: C.DARK, font: 'Arial' })] }),
-              new Paragraph({ children: [new TextRun({ text: 'nexorashipping.com', size: 20, color: C.LIGHT_SLATE, font: 'Arial' })] }),
-              new Paragraph({ children: [new TextRun({ text: `${q.shipFromAddress}, ${q.shipFromCity}, ${q.shipFromCountry}`, size: 20, color: C.LIGHT_SLATE, font: 'Arial' })] }),
+              new Paragraph({ children: [new TextRun({ text: 'QUOTATION DETAILS', bold: true, size: 20, color: C.LIGHT_SLATE, font: 'Arial' })] }),
+              new Paragraph({ spacing: { before: 60 }, children: [new TextRun({ text: q.shipFromName, bold: true, size: 24, color: C.DARK, font: 'Arial' })] }),
+              new Paragraph({ children: [new TextRun({ text: `${q.shipFromAddress}, ${q.shipFromCity}, ${q.shipFromCountry}`, size: 20, color: C.SLATE, font: 'Arial' })] }),
             ],
           }),
           new TableCell({
             borders: NO_BORDER,
             width: { size: 50, type: WidthType.PERCENTAGE },
             children: [
-              new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: 'QUOTATION', bold: true, size: 60, color: C.NAVY, font: 'Arial' })] }),
-              new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: q.quotationNumber, bold: true, size: 28, color: C.DARK, font: 'Courier New' })] }),
+              new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: 'QUOTATION', bold: true, size: 44, color: C.NAVY, font: 'Arial' })] }),
+              new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: q.quotationNumber, bold: true, size: 26, color: C.DARK, font: 'Courier New' })] }),
               new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: `Date: ${fmtDate(q.quotationDate)}`, size: 20, color: C.SLATE, font: 'Arial' })] }),
               ...(q.validUntil ? [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: `Valid Until: ${fmtDate(q.validUntil)}`, size: 20, color: C.SLATE, font: 'Arial' })] })] : []),
               new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: `Status: ${q.status}`, size: 20, color: C.SLATE, font: 'Arial' })] }),
@@ -271,15 +275,15 @@ export async function generateQuotationWordBuffer(q: WordQuotation): Promise<Buf
       children: [new TextRun({ text: q.notes, size: 20, color: C.SLATE, font: 'Arial' })],
     }));
   }
-  footerParas.push(new Paragraph({
-    alignment: AlignmentType.CENTER,
-    spacing: { before: 400 },
-    children: [new TextRun({ text: 'This quotation is valid until the date above · Nexora Express Logistics · nexorashipping.com', size: 18, color: C.LIGHT_SLATE, font: 'Arial' })],
-  }));
+
+  const docHeader = buildDocHeaderWithWatermark();
+  const docFooter = buildDocFooter();
 
   const doc = new Document({
     sections: [{
-      properties: { page: { margin: { top: 720, right: 720, bottom: 720, left: 720 } } },
+      properties: { page: { margin: { top: 1440, right: 720, bottom: 1440, left: 720 } } },
+      ...(docHeader ? { headers: { default: docHeader } } : {}),
+      ...(docFooter ? { footers: { default: docFooter } } : {}),
       children: [
         headerTable,
         divider,
