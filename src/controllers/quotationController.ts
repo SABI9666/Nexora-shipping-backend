@@ -1,19 +1,19 @@
 import { Response, NextFunction } from 'express';
 import { z } from 'zod';
-import { InvoiceStatus, Role } from '@prisma/client';
+import { QuotationStatus, Role } from '@prisma/client';
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../types';
-import { generateInvoiceNumber, paginate } from '../utils/helpers';
-import { generateInvoiceWordBuffer } from '../utils/wordGenerator';
+import { generateQuotationNumber, paginate } from '../utils/helpers';
+import { generateQuotationWordBuffer } from '../utils/quotationWordGenerator';
 
-const invoiceItemSchema = z.object({
+const quotationItemSchema = z.object({
   description: z.string().min(1),
   quantity: z.number().positive(),
   unitPrice: z.number().min(0),
 });
 
-const createInvoiceSchema = z.object({
+const createQuotationSchema = z.object({
   orderId: z.string().uuid().optional(),
   billToName: z.string().min(2),
   billToAddress: z.string().min(5),
@@ -28,27 +28,27 @@ const createInvoiceSchema = z.object({
   currency: z.enum(['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'INR']).default('USD'),
   taxRate: z.number().min(0).max(100).default(0),
   shippingCost: z.number().min(0).default(0),
-  paymentTerms: z.string().optional(),
+  terms: z.string().optional(),
   notes: z.string().optional(),
-  dueDate: z.string().optional(),
-  status: z.nativeEnum(InvoiceStatus).optional(),
-  items: z.array(invoiceItemSchema).min(1, 'At least one line item required'),
+  validUntil: z.string().optional(),
+  status: z.nativeEnum(QuotationStatus).optional(),
+  items: z.array(quotationItemSchema).min(1, 'At least one line item required'),
 });
 
-const updateInvoiceSchema = z.object({
-  status: z.nativeEnum(InvoiceStatus).optional(),
+const updateQuotationSchema = z.object({
+  status: z.nativeEnum(QuotationStatus).optional(),
   billToName: z.string().min(2).optional(),
   billToAddress: z.string().min(5).optional(),
   billToCity: z.string().min(2).optional(),
   billToCountry: z.string().min(2).optional(),
   billToEmail: z.string().email().optional().or(z.literal('')),
   billToPhone: z.string().optional(),
-  paymentTerms: z.string().optional(),
+  terms: z.string().optional(),
   notes: z.string().optional(),
-  dueDate: z.string().optional(),
+  validUntil: z.string().optional(),
   taxRate: z.number().min(0).max(100).optional(),
   shippingCost: z.number().min(0).optional(),
-  items: z.array(invoiceItemSchema).min(1).optional(),
+  items: z.array(quotationItemSchema).min(1).optional(),
 });
 
 function calcTotals(items: { quantity: number; unitPrice: number }[], taxRate: number, shippingCost: number) {
@@ -58,9 +58,9 @@ function calcTotals(items: { quantity: number; unitPrice: number }[], taxRate: n
   return { subtotal: Math.round(subtotal * 100) / 100, taxAmount, total };
 }
 
-export const createInvoice = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+export const createQuotation = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const data = createInvoiceSchema.parse(req.body);
+    const data = createQuotationSchema.parse(req.body);
     const isAdmin = req.user!.role === Role.ADMIN;
 
     if (data.orderId) {
@@ -72,12 +72,12 @@ export const createInvoice = async (req: AuthRequest, res: Response, next: NextF
 
     const { subtotal, taxAmount, total } = calcTotals(data.items, data.taxRate, data.shippingCost);
 
-    const invoice = await prisma.invoice.create({
+    const quotation = await prisma.quotation.create({
       data: {
-        invoiceNumber: generateInvoiceNumber(),
+        quotationNumber: generateQuotationNumber(),
         status: data.status ?? 'DRAFT',
-        invoiceDate: new Date(),
-        dueDate: data.dueDate ? new Date(data.dueDate) : null,
+        quotationDate: new Date(),
+        validUntil: data.validUntil ? new Date(data.validUntil) : null,
         billToName: data.billToName,
         billToAddress: data.billToAddress,
         billToCity: data.billToCity,
@@ -94,7 +94,7 @@ export const createInvoice = async (req: AuthRequest, res: Response, next: NextF
         shippingCost: data.shippingCost,
         subtotal,
         total,
-        paymentTerms: data.paymentTerms || null,
+        terms: data.terms || null,
         notes: data.notes || null,
         orderId: data.orderId || null,
         userId: req.user!.id,
@@ -110,7 +110,7 @@ export const createInvoice = async (req: AuthRequest, res: Response, next: NextF
       include: { items: true, orderRef: { select: { orderNumber: true } } },
     });
 
-    res.status(201).json({ success: true, message: 'Invoice created', data: invoice });
+    res.status(201).json({ success: true, message: 'Quotation created', data: quotation });
   } catch (error) {
     if (error instanceof z.ZodError) {
       res.status(400).json({ success: false, message: error.errors[0].message });
@@ -120,11 +120,11 @@ export const createInvoice = async (req: AuthRequest, res: Response, next: NextF
   }
 };
 
-export const getInvoices = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+export const getQuotations = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 10;
-    const status = req.query.status as InvoiceStatus | undefined;
+    const status = req.query.status as QuotationStatus | undefined;
     const search = req.query.search as string | undefined;
     const isAdmin = req.user!.role === Role.ADMIN;
 
@@ -133,15 +133,15 @@ export const getInvoices = async (req: AuthRequest, res: Response, next: NextFun
       ...(status ? { status } : {}),
       ...(search ? {
         OR: [
-          { invoiceNumber: { contains: search, mode: 'insensitive' as const } },
+          { quotationNumber: { contains: search, mode: 'insensitive' as const } },
           { billToName: { contains: search, mode: 'insensitive' as const } },
           { billToEmail: { contains: search, mode: 'insensitive' as const } },
         ],
       } : {}),
     };
 
-    const [invoices, total] = await prisma.$transaction([
-      prisma.invoice.findMany({
+    const [quotations, total] = await prisma.$transaction([
+      prisma.quotation.findMany({
         where,
         ...paginate(page, limit),
         orderBy: { createdAt: 'desc' },
@@ -151,12 +151,12 @@ export const getInvoices = async (req: AuthRequest, res: Response, next: NextFun
           user: { select: { id: true, firstName: true, lastName: true, email: true } },
         },
       }),
-      prisma.invoice.count({ where }),
+      prisma.quotation.count({ where }),
     ]);
 
     res.json({
       success: true,
-      data: invoices,
+      data: quotations,
       meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
     });
   } catch (error) {
@@ -164,12 +164,12 @@ export const getInvoices = async (req: AuthRequest, res: Response, next: NextFun
   }
 };
 
-export const getInvoice = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+export const getQuotation = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
     const isAdmin = req.user!.role === Role.ADMIN;
 
-    const invoice = await prisma.invoice.findFirst({
+    const quotation = await prisma.quotation.findFirst({
       where: { id, ...(isAdmin ? {} : { userId: req.user!.id }) },
       include: {
         items: true,
@@ -178,35 +178,35 @@ export const getInvoice = async (req: AuthRequest, res: Response, next: NextFunc
       },
     });
 
-    if (!invoice) throw new AppError('Invoice not found', 404);
-    res.json({ success: true, data: invoice });
+    if (!quotation) throw new AppError('Quotation not found', 404);
+    res.json({ success: true, data: quotation });
   } catch (error) {
     next(error);
   }
 };
 
-export const updateInvoice = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+export const updateQuotation = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
-    const data = updateInvoiceSchema.parse(req.body);
+    const data = updateQuotationSchema.parse(req.body);
     const isAdmin = req.user!.role === Role.ADMIN;
 
-    const invoice = await prisma.invoice.findFirst({
+    const quotation = await prisma.quotation.findFirst({
       where: { id, ...(isAdmin ? {} : { userId: req.user!.id }) },
       include: { items: true },
     });
-    if (!invoice) throw new AppError('Invoice not found', 404);
+    if (!quotation) throw new AppError('Quotation not found', 404);
 
-    const newItems = data.items ?? invoice.items.map((i) => ({
+    const newItems = data.items ?? quotation.items.map((i) => ({
       description: i.description,
       quantity: i.quantity,
       unitPrice: i.unitPrice,
     }));
-    const newTaxRate = data.taxRate ?? invoice.taxRate;
-    const newShippingCost = data.shippingCost ?? invoice.shippingCost;
+    const newTaxRate = data.taxRate ?? quotation.taxRate;
+    const newShippingCost = data.shippingCost ?? quotation.shippingCost;
     const { subtotal, taxAmount, total } = calcTotals(newItems, newTaxRate, newShippingCost);
 
-    const updated = await prisma.invoice.update({
+    const updated = await prisma.quotation.update({
       where: { id },
       data: {
         ...(data.status ? { status: data.status } : {}),
@@ -216,9 +216,9 @@ export const updateInvoice = async (req: AuthRequest, res: Response, next: NextF
         ...(data.billToCountry ? { billToCountry: data.billToCountry } : {}),
         ...(data.billToEmail !== undefined ? { billToEmail: data.billToEmail || null } : {}),
         ...(data.billToPhone !== undefined ? { billToPhone: data.billToPhone || null } : {}),
-        ...(data.paymentTerms !== undefined ? { paymentTerms: data.paymentTerms || null } : {}),
+        ...(data.terms !== undefined ? { terms: data.terms || null } : {}),
         ...(data.notes !== undefined ? { notes: data.notes || null } : {}),
-        ...(data.dueDate !== undefined ? { dueDate: data.dueDate ? new Date(data.dueDate) : null } : {}),
+        ...(data.validUntil !== undefined ? { validUntil: data.validUntil ? new Date(data.validUntil) : null } : {}),
         taxRate: newTaxRate,
         shippingCost: newShippingCost,
         subtotal,
@@ -239,7 +239,7 @@ export const updateInvoice = async (req: AuthRequest, res: Response, next: NextF
       include: { items: true, orderRef: { select: { orderNumber: true } } },
     });
 
-    res.json({ success: true, message: 'Invoice updated', data: updated });
+    res.json({ success: true, message: 'Quotation updated', data: updated });
   } catch (error) {
     if (error instanceof z.ZodError) {
       res.status(400).json({ success: false, message: error.errors[0].message });
@@ -249,42 +249,39 @@ export const updateInvoice = async (req: AuthRequest, res: Response, next: NextF
   }
 };
 
-export const deleteInvoice = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+export const deleteQuotation = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
     const isAdmin = req.user!.role === Role.ADMIN;
 
-    const invoice = await prisma.invoice.findFirst({
+    const quotation = await prisma.quotation.findFirst({
       where: { id, ...(isAdmin ? {} : { userId: req.user!.id }) },
     });
-    if (!invoice) throw new AppError('Invoice not found', 404);
+    if (!quotation) throw new AppError('Quotation not found', 404);
 
-    await prisma.invoice.delete({ where: { id } });
-    res.json({ success: true, message: 'Invoice deleted' });
+    await prisma.quotation.delete({ where: { id } });
+    res.json({ success: true, message: 'Quotation deleted' });
   } catch (error) {
     next(error);
   }
 };
 
-export const downloadInvoiceWord = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+export const downloadQuotationWord = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
     const isAdmin = req.user!.role === Role.ADMIN;
 
-    const invoice = await prisma.invoice.findFirst({
+    const quotation = await prisma.quotation.findFirst({
       where: { id, ...(isAdmin ? {} : { userId: req.user!.id }) },
-      include: {
-        items: true,
-        orderRef: { select: { orderNumber: true } },
-      },
+      include: { items: true, orderRef: { select: { orderNumber: true } } },
     });
 
-    if (!invoice) throw new AppError('Invoice not found', 404);
+    if (!quotation) throw new AppError('Quotation not found', 404);
 
-    const buffer = await generateInvoiceWordBuffer(invoice);
+    const buffer = await generateQuotationWordBuffer(quotation);
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-    res.setHeader('Content-Disposition', `attachment; filename="${invoice.invoiceNumber}.docx"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${quotation.quotationNumber}.docx"`);
     res.send(buffer);
   } catch (error) {
     next(error);

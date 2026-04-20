@@ -44,6 +44,22 @@ enum InvoiceStatus {
   CANCELLED
 }
 
+enum QuotationStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  CANCELLED
+}
+
+enum AccountGroupType {
+  ASSET
+  LIABILITIES
+  PL
+  TRADING
+}
+
 model User {
   id           String   @id @default(uuid())
   email        String   @unique
@@ -57,10 +73,11 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  orders    Order[]
-  shipments Shipment[]
-  documents Document[]
-  invoices  Invoice[]
+  orders     Order[]
+  shipments  Shipment[]
+  documents  Document[]
+  invoices   Invoice[]
+  quotations Quotation[]
 
   @@map("users")
 }
@@ -87,10 +104,11 @@ model Order {
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
 
-  user      User       @relation(fields: [userId], references: [id])
-  shipment  Shipment?
-  documents Document[]
-  invoices  Invoice[]
+  user       User        @relation(fields: [userId], references: [id])
+  shipment   Shipment?
+  documents  Document[]
+  invoices   Invoice[]
+  quotations Quotation[]
 
   @@map("orders")
 }
@@ -211,4 +229,156 @@ model InvoiceItem {
   invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
   @@map("invoice_items")
+}
+
+model Quotation {
+  id              String          @id @default(uuid())
+  quotationNumber String          @unique
+  status          QuotationStatus @default(DRAFT)
+  quotationDate   DateTime        @default(now())
+  validUntil      DateTime?
+
+  // Bill To / Client
+  billToName    String
+  billToAddress String
+  billToCity    String
+  billToCountry String
+  billToEmail   String?
+  billToPhone   String?
+
+  // Ship From (company)
+  shipFromName    String @default("Nexora Express")
+  shipFromAddress String @default("1 Nexora Way")
+  shipFromCity    String @default("London")
+  shipFromCountry String @default("GB")
+
+  // Financial
+  currency     String @default("USD")
+  subtotal     Float  @default(0)
+  taxRate      Float  @default(0)
+  taxAmount    Float  @default(0)
+  shippingCost Float  @default(0)
+  total        Float  @default(0)
+
+  // Meta
+  terms String?
+  notes String?
+
+  // Relations
+  orderId   String?
+  userId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User             @relation(fields: [userId], references: [id])
+  orderRef Order?           @relation(fields: [orderId], references: [id])
+  items    QuotationItem[]
+
+  @@map("quotations")
+}
+
+model QuotationItem {
+  id          String  @id @default(uuid())
+  quotationId String
+  description String
+  quantity    Float   @default(1)
+  unitPrice   Float
+  amount      Float
+
+  quotation Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+
+  @@map("quotation_items")
+}
+
+model AccountGroup {
+  id         String           @id @default(uuid())
+  code       String           @unique
+  name       String
+  groupType  AccountGroupType
+  printOrder Int              @default(0)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  accounts Account[]
+
+  @@map("account_groups")
+}
+
+model CustomerGroup {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accounts Account[]
+
+  @@map("customer_groups")
+}
+
+model Account {
+  id              String  @id @default(uuid())
+  code            String  @unique
+  name            String
+  arabicName      String?
+  accountGroupId  String
+  destination     String?
+  address         String?
+  road            String?
+  place           String?
+  route           String?
+  subRoute        String?
+  phone1          String?
+  mobile1         String?
+  mobile2         String?
+  email           String?
+  financeEmail    String?
+  contactPerson   String?
+  acContactPerson String?
+  acMobileNo      String?
+  rep             String?
+  rep2            String?
+  opBalance       Float   @default(0)
+  opBalanceType   String  @default("Credit")
+  narration       String?
+  paymentTerms    String?
+  trn             String?
+  creditDays      Int     @default(0)
+  creditInvoices  Int     @default(0)
+  creditLimit     Float   @default(0)
+  customerGroupId String?
+  deliveryAddress String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  accountGroup  AccountGroup   @relation(fields: [accountGroupId], references: [id])
+  customerGroup CustomerGroup? @relation(fields: [customerGroupId], references: [id])
+  subAccounts   SubAccount[]
+
+  @@map("accounts")
+}
+
+model SubAccount {
+  id        String   @id @default(uuid())
+  code      String
+  name      String
+  accountId String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, code])
+  @@map("sub_accounts")
+}
+
+model ItemMaster {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  name      String
+  phone     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("item_masters")
 }
