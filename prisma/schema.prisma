@@ -44,6 +44,15 @@ enum InvoiceStatus {
   CANCELLED
 }
 
+enum QuotationStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  CANCELLED
+}
+
 enum AccountGroupType {
   ASSET
   LIABILITIES
@@ -64,10 +73,11 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  orders    Order[]
-  shipments Shipment[]
-  documents Document[]
-  invoices  Invoice[]
+  orders     Order[]
+  shipments  Shipment[]
+  documents  Document[]
+  invoices   Invoice[]
+  quotations Quotation[]
 
   @@map("users")
 }
@@ -94,10 +104,11 @@ model Order {
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
 
-  user      User       @relation(fields: [userId], references: [id])
-  shipment  Shipment?
-  documents Document[]
-  invoices  Invoice[]
+  user       User        @relation(fields: [userId], references: [id])
+  shipment   Shipment?
+  documents  Document[]
+  invoices   Invoice[]
+  quotations Quotation[]
 
   @@map("orders")
 }
@@ -213,6 +224,60 @@ model InvoiceItem {
   invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
   @@map("invoice_items")
+}
+
+model Quotation {
+  id              String          @id @default(uuid())
+  quotationNumber String          @unique
+  status          QuotationStatus @default(DRAFT)
+  quotationDate   DateTime        @default(now())
+  validUntil      DateTime?
+
+  billToName    String
+  billToAddress String
+  billToCity    String
+  billToCountry String
+  billToEmail   String?
+  billToPhone   String?
+
+  shipFromName    String @default("Nexora Express")
+  shipFromAddress String @default("1 Nexora Way")
+  shipFromCity    String @default("London")
+  shipFromCountry String @default("GB")
+
+  currency     String @default("USD")
+  subtotal     Float  @default(0)
+  taxRate      Float  @default(0)
+  taxAmount    Float  @default(0)
+  shippingCost Float  @default(0)
+  total        Float  @default(0)
+
+  terms String?
+  notes String?
+
+  orderId   String?
+  userId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User            @relation(fields: [userId], references: [id])
+  orderRef Order?          @relation(fields: [orderId], references: [id])
+  items    QuotationItem[]
+
+  @@map("quotations")
+}
+
+model QuotationItem {
+  id          String  @id @default(uuid())
+  quotationId String
+  description String
+  quantity    Float   @default(1)
+  unitPrice   Float
+  amount      Float
+
+  quotation Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+
+  @@map("quotation_items")
 }
 
 model AccountGroup {
