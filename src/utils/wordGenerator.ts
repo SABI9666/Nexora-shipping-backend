@@ -11,6 +11,10 @@ import {
   TextRun,
   WidthType,
 } from 'docx';
+import {
+  buildDocHeaderWithWatermark,
+  buildDocFooter,
+} from './docxImageBranding';
 
 const C = {
   NAVY: '1E3A5F',
@@ -83,7 +87,6 @@ export type WordInvoice = {
 };
 
 export async function generateInvoiceWordBuffer(invoice: WordInvoice): Promise<Buffer> {
-  // ── Header: Company | INVOICE ──
   const headerTable = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     borders: TABLE_NO_BORDER,
@@ -94,17 +97,17 @@ export async function generateInvoiceWordBuffer(invoice: WordInvoice): Promise<B
             borders: NO_BORDER,
             width: { size: 50, type: WidthType.PERCENTAGE },
             children: [
-              new Paragraph({ children: [new TextRun({ text: 'NEXORA EXPRESS', bold: true, size: 52, color: C.DARK, font: 'Arial' })] }),
-              new Paragraph({ children: [new TextRun({ text: 'nexorashipping.com', size: 20, color: C.LIGHT_SLATE, font: 'Arial' })] }),
-              new Paragraph({ children: [new TextRun({ text: `${invoice.shipFromAddress}, ${invoice.shipFromCity}, ${invoice.shipFromCountry}`, size: 20, color: C.LIGHT_SLATE, font: 'Arial' })] }),
+              new Paragraph({ children: [new TextRun({ text: 'INVOICE DETAILS', bold: true, size: 20, color: C.LIGHT_SLATE, font: 'Arial' })] }),
+              new Paragraph({ spacing: { before: 60 }, children: [new TextRun({ text: invoice.shipFromName, bold: true, size: 24, color: C.DARK, font: 'Arial' })] }),
+              new Paragraph({ children: [new TextRun({ text: `${invoice.shipFromAddress}, ${invoice.shipFromCity}, ${invoice.shipFromCountry}`, size: 20, color: C.SLATE, font: 'Arial' })] }),
             ],
           }),
           new TableCell({
             borders: NO_BORDER,
             width: { size: 50, type: WidthType.PERCENTAGE },
             children: [
-              new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: 'INVOICE', bold: true, size: 64, color: C.NAVY, font: 'Arial' })] }),
-              new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: invoice.invoiceNumber, bold: true, size: 28, color: C.DARK, font: 'Courier New' })] }),
+              new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: 'INVOICE', bold: true, size: 48, color: C.NAVY, font: 'Arial' })] }),
+              new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: invoice.invoiceNumber, bold: true, size: 26, color: C.DARK, font: 'Courier New' })] }),
               new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: `Date: ${fmtDate(invoice.invoiceDate)}`, size: 20, color: C.SLATE, font: 'Arial' })] }),
               ...(invoice.dueDate ? [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: `Due: ${fmtDate(invoice.dueDate)}`, size: 20, color: C.SLATE, font: 'Arial' })] })] : []),
               new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: `Status: ${invoice.status}`, size: 20, color: C.SLATE, font: 'Arial' })] }),
@@ -115,14 +118,12 @@ export async function generateInvoiceWordBuffer(invoice: WordInvoice): Promise<B
     ],
   });
 
-  // ── Navy divider ──
   const divider = new Paragraph({
     border: { bottom: { style: BorderStyle.THICK, size: 12, color: C.NAVY } },
     children: [],
     spacing: { before: 200, after: 200 },
   });
 
-  // ── From / Bill To ──
   const fromToTable = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     borders: TABLE_NO_BORDER,
@@ -157,7 +158,6 @@ export async function generateInvoiceWordBuffer(invoice: WordInvoice): Promise<B
     ],
   });
 
-  // ── Meta row ──
   const metaTable = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     borders: TABLE_NO_BORDER,
@@ -183,7 +183,6 @@ export async function generateInvoiceWordBuffer(invoice: WordInvoice): Promise<B
     ],
   });
 
-  // ── Order ref ──
   const orderRefPara = invoice.orderRef
     ? new Paragraph({
         shading: { type: ShadingType.CLEAR, color: 'auto', fill: C.BLUE_BG },
@@ -195,7 +194,6 @@ export async function generateInvoiceWordBuffer(invoice: WordInvoice): Promise<B
       })
     : null;
 
-  // ── Line items table ──
   const colWidths = [60, 10, 15, 15];
   const itemsTable = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
@@ -230,7 +228,6 @@ export async function generateInvoiceWordBuffer(invoice: WordInvoice): Promise<B
     ],
   });
 
-  // ── Totals (right-aligned via wrapper) ──
   const totalsData = [
     { label: 'Subtotal',                      value: fmtNum(invoice.subtotal),      isFinal: false },
     ...(invoice.taxRate > 0      ? [{ label: `Tax (${invoice.taxRate}%)`, value: fmtNum(invoice.taxAmount),   isFinal: false }] : []),
@@ -256,7 +253,6 @@ export async function generateInvoiceWordBuffer(invoice: WordInvoice): Promise<B
     }),
   });
 
-  // ── Footer ──
   const footerParas: Paragraph[] = [
     new Paragraph({
       border: { top: { style: BorderStyle.SINGLE, size: 4, color: C.BORDER } },
@@ -279,15 +275,15 @@ export async function generateInvoiceWordBuffer(invoice: WordInvoice): Promise<B
       children: [new TextRun({ text: invoice.notes, size: 20, color: C.SLATE, font: 'Arial' })],
     }));
   }
-  footerParas.push(new Paragraph({
-    alignment: AlignmentType.CENTER,
-    spacing: { before: 400 },
-    children: [new TextRun({ text: 'Thank you for your business · Nexora Express Logistics · nexorashipping.com', size: 18, color: C.LIGHT_SLATE, font: 'Arial' })],
-  }));
+
+  const docHeader = buildDocHeaderWithWatermark();
+  const docFooter = buildDocFooter();
 
   const doc = new Document({
     sections: [{
-      properties: { page: { margin: { top: 720, right: 720, bottom: 720, left: 720 } } },
+      properties: { page: { margin: { top: 1440, right: 720, bottom: 1440, left: 720 } } },
+      ...(docHeader ? { headers: { default: docHeader } } : {}),
+      ...(docFooter ? { footers: { default: docFooter } } : {}),
       children: [
         headerTable,
         divider,
