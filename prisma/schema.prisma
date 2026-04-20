@@ -53,6 +53,13 @@ enum QuotationStatus {
   CANCELLED
 }
 
+enum AccountGroupType {
+  ASSET
+  LIABILITIES
+  PL
+  TRADING
+}
+
 model User {
   id           String   @id @default(uuid())
   email        String   @unique
@@ -281,4 +288,97 @@ model QuotationItem {
   quotation Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
 
   @@map("quotation_items")
+}
+
+model AccountGroup {
+  id         String           @id @default(uuid())
+  code       String           @unique
+  name       String
+  groupType  AccountGroupType
+  printOrder Int              @default(0)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  accounts Account[]
+
+  @@map("account_groups")
+}
+
+model CustomerGroup {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accounts Account[]
+
+  @@map("customer_groups")
+}
+
+model Account {
+  id              String  @id @default(uuid())
+  code            String  @unique
+  name            String
+  arabicName      String?
+  accountGroupId  String
+  destination     String?
+  address         String?
+  road            String?
+  place           String?
+  route           String?
+  subRoute        String?
+  phone1          String?
+  mobile1         String?
+  mobile2         String?
+  email           String?
+  financeEmail    String?
+  contactPerson   String?
+  acContactPerson String?
+  acMobileNo      String?
+  rep             String?
+  rep2            String?
+  opBalance       Float   @default(0)
+  opBalanceType   String  @default("Credit")
+  narration       String?
+  paymentTerms    String?
+  trn             String?
+  creditDays      Int     @default(0)
+  creditInvoices  Int     @default(0)
+  creditLimit     Float   @default(0)
+  customerGroupId String?
+  deliveryAddress String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  accountGroup  AccountGroup   @relation(fields: [accountGroupId], references: [id])
+  customerGroup CustomerGroup? @relation(fields: [customerGroupId], references: [id])
+  subAccounts   SubAccount[]
+
+  @@map("accounts")
+}
+
+model SubAccount {
+  id        String   @id @default(uuid())
+  code      String
+  name      String
+  accountId String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, code])
+  @@map("sub_accounts")
+}
+
+model ItemMaster {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  name      String
+  phone     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("item_masters")
 }
