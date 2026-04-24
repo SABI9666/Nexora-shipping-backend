@@ -316,6 +316,23 @@ model CustomerGroup {
   @@map("customer_groups")
 }
 
+model Salesperson {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  name      String
+  phone     String?
+  email     String?
+  notes     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  primaryAccounts   Account[] @relation("AccountPrimarySalesperson")
+  secondaryAccounts Account[] @relation("AccountSecondarySalesperson")
+
+  @@map("salespersons")
+}
+
 model Account {
   id              String  @id @default(uuid())
   code            String  @unique
@@ -338,6 +355,8 @@ model Account {
   acMobileNo      String?
   rep             String?
   rep2            String?
+  repId           String?
+  rep2Id          String?
   opBalance       Float   @default(0)
   opBalanceType   String  @default("Credit")
   narration       String?
@@ -351,9 +370,11 @@ model Account {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  accountGroup  AccountGroup   @relation(fields: [accountGroupId], references: [id])
-  customerGroup CustomerGroup? @relation(fields: [customerGroupId], references: [id])
-  subAccounts   SubAccount[]
+  accountGroup       AccountGroup   @relation(fields: [accountGroupId], references: [id])
+  customerGroup      CustomerGroup? @relation(fields: [customerGroupId], references: [id])
+  salesperson        Salesperson?   @relation("AccountPrimarySalesperson", fields: [repId], references: [id])
+  salesperson2       Salesperson?   @relation("AccountSecondarySalesperson", fields: [rep2Id], references: [id])
+  subAccounts        SubAccount[]
 
   @@map("accounts")
 }
