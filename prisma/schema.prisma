@@ -101,14 +101,17 @@ model Order {
   price               Float?
   specialInstructions String?
   userId              String
+  repId               String?
+  repName             String?
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
 
-  user       User        @relation(fields: [userId], references: [id])
-  shipment   Shipment?
-  documents  Document[]
-  invoices   Invoice[]
-  quotations Quotation[]
+  user        User         @relation(fields: [userId], references: [id])
+  salesperson Salesperson? @relation("OrderSalesperson", fields: [repId], references: [id])
+  shipment    Shipment?
+  documents   Document[]
+  invoices    Invoice[]
+  quotations  Quotation[]
 
   @@map("orders")
 }
@@ -329,6 +332,7 @@ model Salesperson {
 
   primaryAccounts   Account[] @relation("AccountPrimarySalesperson")
   secondaryAccounts Account[] @relation("AccountSecondarySalesperson")
+  orders            Order[]   @relation("OrderSalesperson")
 
   @@map("salespersons")
 }
