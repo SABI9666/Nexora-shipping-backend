@@ -6,6 +6,7 @@ import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../types';
 import { generateInvoiceNumber, paginate } from '../utils/helpers';
 import { generateInvoiceWordBuffer } from '../utils/wordGenerator';
+import { generateInvoicePdfBuffer } from '../utils/invoicePdfGenerator';
 
 const invoiceItemSchema = z.object({
   description: z.string().min(1),
@@ -285,6 +286,31 @@ export const downloadInvoiceWord = async (req: AuthRequest, res: Response, next:
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     res.setHeader('Content-Disposition', `attachment; filename="${invoice.invoiceNumber}.docx"`);
+    res.send(buffer);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const downloadInvoicePdf = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const isAdmin = req.user!.role === Role.ADMIN;
+
+    const invoice = await prisma.invoice.findFirst({
+      where: { id, ...(isAdmin ? {} : { userId: req.user!.id }) },
+      include: {
+        items: true,
+        orderRef: { select: { orderNumber: true } },
+      },
+    });
+
+    if (!invoice) throw new AppError('Invoice not found', 404);
+
+    const buffer = await generateInvoicePdfBuffer(invoice);
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${invoice.invoiceNumber}.pdf"`);
     res.send(buffer);
   } catch (error) {
     next(error);
