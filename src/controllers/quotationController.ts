@@ -6,6 +6,7 @@ import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../types';
 import { generateQuotationNumber, paginate } from '../utils/helpers';
 import { generateQuotationWordBuffer } from '../utils/quotationWordGenerator';
+import { generateQuotationPdfBuffer } from '../utils/quotationPdfGenerator';
 
 const quotationItemSchema = z.object({
   description: z.string().min(1),
@@ -282,6 +283,28 @@ export const downloadQuotationWord = async (req: AuthRequest, res: Response, nex
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     res.setHeader('Content-Disposition', `attachment; filename="${quotation.quotationNumber}.docx"`);
+    res.send(buffer);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const downloadQuotationPdf = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const isAdmin = req.user!.role === Role.ADMIN;
+
+    const quotation = await prisma.quotation.findFirst({
+      where: { id, ...(isAdmin ? {} : { userId: req.user!.id }) },
+      include: { items: true, orderRef: { select: { orderNumber: true } } },
+    });
+
+    if (!quotation) throw new AppError('Quotation not found', 404);
+
+    const buffer = await generateQuotationPdfBuffer(quotation);
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${quotation.quotationNumber}.pdf"`);
     res.send(buffer);
   } catch (error) {
     next(error);
