@@ -1,4 +1,10 @@
 import PDFDocument from 'pdfkit';
+import {
+  attachBrandingToDoc,
+  contentBottom,
+  CONTENT_TOP,
+  PAGE_MARGIN,
+} from './pdfBranding';
 
 type InvoiceItem = {
   description: string;
@@ -46,33 +52,36 @@ const fmtDate = (d: Date | null | undefined) =>
 
 export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'A4', margin: 40 });
+    const doc = new PDFDocument({ size: 'A4', margins: PAGE_MARGIN });
     const chunks: Buffer[] = [];
     doc.on('data', (c: Buffer) => chunks.push(c));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    const left = 40;
-    const right = doc.page.width - 40;
-    const fullW = right - left;
+    attachBrandingToDoc(doc);
 
-    // Header
-    doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(18).text(invoice.shipFromName, left, 45);
+    const left = PAGE_MARGIN.left;
+    const right = doc.page.width - PAGE_MARGIN.right;
+    const fullW = right - left;
+    const TOP = CONTENT_TOP;
+
+    // Title block
+    doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(18).text(invoice.shipFromName, left, TOP + 5);
     doc.fillColor(GREY).font('Helvetica').fontSize(9)
-      .text(invoice.shipFromAddress, left, 68, { width: 280 })
-      .text(`${invoice.shipFromCity}, ${invoice.shipFromCountry}`, left, 81);
+      .text(invoice.shipFromAddress, left, TOP + 28, { width: 280 })
+      .text(`${invoice.shipFromCity}, ${invoice.shipFromCountry}`, left, TOP + 41);
 
     doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(26)
-      .text('INVOICE', left, 45, { align: 'right', width: fullW });
+      .text('INVOICE', left, TOP + 5, { align: 'right', width: fullW });
     doc.fillColor(GREY).font('Courier-Bold').fontSize(11)
-      .text(invoice.invoiceNumber, left, 78, { align: 'right', width: fullW });
+      .text(invoice.invoiceNumber, left, TOP + 38, { align: 'right', width: fullW });
     doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(9)
-      .text(invoice.status.toUpperCase(), left, 95, { align: 'right', width: fullW });
+      .text(invoice.status.toUpperCase(), left, TOP + 55, { align: 'right', width: fullW });
 
-    doc.moveTo(left, 118).lineTo(right, 118).strokeColor(LIGHT).lineWidth(0.5).stroke();
+    doc.moveTo(left, TOP + 78).lineTo(right, TOP + 78).strokeColor(LIGHT).lineWidth(0.5).stroke();
 
     // Bill To + Meta
-    const boxY = 132;
+    const boxY = TOP + 92;
     const colW = (fullW - 20) / 2;
     const metaX = left + colW + 20;
 
@@ -114,15 +123,26 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     const colUnit = left + 350;
     const rowH = 22;
 
-    doc.rect(left, tableTop, fullW, rowH).fill(HEAD_BG);
-    doc.fillColor(GREY).font('Helvetica-Bold').fontSize(8)
-      .text('DESCRIPTION', left + 6, tableTop + 7)
-      .text('QTY', colQty, tableTop + 7, { width: 40, align: 'right' })
-      .text('UNIT PRICE', colUnit, tableTop + 7, { width: 70, align: 'right' })
-      .text('AMOUNT', right - 86, tableTop + 7, { width: 80, align: 'right' });
+    const drawTableHeader = (y: number) => {
+      doc.rect(left, y, fullW, rowH).fill(HEAD_BG);
+      doc.fillColor(GREY).font('Helvetica-Bold').fontSize(8)
+        .text('DESCRIPTION', left + 6, y + 7)
+        .text('QTY', colQty, y + 7, { width: 40, align: 'right' })
+        .text('UNIT PRICE', colUnit, y + 7, { width: 70, align: 'right' })
+        .text('AMOUNT', right - 86, y + 7, { width: 80, align: 'right' });
+    };
 
+    drawTableHeader(tableTop);
     let rowY = tableTop + rowH;
+
     invoice.items.forEach((item, i) => {
+      // Auto-paginate so the table never overlaps the footer band
+      if (rowY + rowH > contentBottom(doc)) {
+        doc.addPage();
+        rowY = CONTENT_TOP;
+        drawTableHeader(rowY);
+        rowY += rowH;
+      }
       if (i % 2 === 1) doc.rect(left, rowY, fullW, rowH).fill(ALT_ROW);
       doc.fillColor(NAVY).font('Helvetica').fontSize(10)
         .text(item.description, left + 6, rowY + 6, { width: 280 })
@@ -133,8 +153,12 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     });
     doc.moveTo(left, rowY).lineTo(right, rowY).strokeColor(LIGHT).lineWidth(0.5).stroke();
 
-    // Totals
+    // Totals — break to a new page if there isn't room
     rowY += 15;
+    if (rowY + 100 > contentBottom(doc)) {
+      doc.addPage();
+      rowY = CONTENT_TOP;
+    }
     const labelX = right - 220;
     const valueX = right - 100;
 
@@ -158,6 +182,10 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     // Notes
     if (invoice.notes) {
       rowY += 20;
+      if (rowY + 50 > contentBottom(doc)) {
+        doc.addPage();
+        rowY = CONTENT_TOP;
+      }
       doc.fillColor(GREY).font('Helvetica-Bold').fontSize(8).text('NOTES', left, rowY);
       doc.fillColor(NAVY).font('Helvetica').fontSize(9).text(invoice.notes, left, rowY + 12, { width: fullW });
     }
