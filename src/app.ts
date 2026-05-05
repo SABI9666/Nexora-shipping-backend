@@ -21,6 +21,7 @@ import accountRoutes from './routes/accounts';
 import itemMasterRoutes from './routes/itemMaster';
 import salespersonRoutes from './routes/salespersons';
 import { errorHandler } from './middleware/errorHandler';
+import { ensureStandardAccountGroups } from './utils/bootstrapAccountGroups';
 
 const app = express();
 
@@ -119,6 +120,7 @@ const PORT = parseInt(process.env.PORT || '8080', 10);
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Nexora Shipping API running on port ${PORT}`);
   console.log(`📦 Environment: ${process.env.NODE_ENV || 'development'}`);
+  ensureStandardAccountGroups();
 });
 
 export default app;
