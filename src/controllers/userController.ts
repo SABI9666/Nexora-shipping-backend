@@ -97,7 +97,52 @@ export const deleteUser = async (req: AuthRequest, res: Response, next: NextFunc
     const user = await prisma.user.findUnique({ where: { id } });
     if (!user) throw new AppError('User not found', 404);
 
-    await prisma.user.delete({ where: { id } });
+    await prisma.$transaction(async (tx) => {
+      const userOrders = await tx.order.findMany({
+        where: { userId: id },
+        select: { id: true },
+      });
+      const userOrderIds = userOrders.map((o) => o.id);
+
+      await tx.document.deleteMany({
+        where: {
+          OR: [
+            { uploadedBy: id },
+            ...(userOrderIds.length ? [{ orderId: { in: userOrderIds } }] : []),
+            { shipment: { userId: id } },
+          ],
+        },
+      });
+
+      await tx.invoice.deleteMany({
+        where: {
+          OR: [
+            { userId: id },
+            ...(userOrderIds.length ? [{ orderId: { in: userOrderIds } }] : []),
+          ],
+        },
+      });
+
+      await tx.quotation.deleteMany({
+        where: {
+          OR: [
+            { userId: id },
+            ...(userOrderIds.length ? [{ orderId: { in: userOrderIds } }] : []),
+          ],
+        },
+      });
+
+      if (userOrderIds.length) {
+        await tx.shipment.updateMany({
+          where: { orderId: { in: userOrderIds }, userId: { not: id } },
+          data: { orderId: null },
+        });
+      }
+
+      await tx.shipment.deleteMany({ where: { userId: id } });
+      await tx.order.deleteMany({ where: { userId: id } });
+      await tx.user.delete({ where: { id } });
+    });
 
     res.json({ success: true, message: 'User deleted successfully' });
   } catch (error) {
