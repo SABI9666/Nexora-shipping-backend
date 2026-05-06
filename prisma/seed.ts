@@ -83,7 +83,7 @@ async function main() {
   // Create a demo order
   const order = await prisma.order.create({
     data: {
-      orderNumber: 'NEX-2024-001',
+      orderNumber: `NEXDX-${new Date().getFullYear()}-00001`,
       status: OrderStatus.SHIPPED,
       pickupAddress: '123 Main St',
       pickupCity: 'New York',
