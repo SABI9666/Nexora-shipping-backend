@@ -97,6 +97,7 @@ model Order {
   length              Float?
   width               Float?
   height              Float?
+  cbm                 Float?
   declaredValue       Float?
   price               Float?
   specialInstructions String?

@@ -18,6 +18,7 @@ const createOrderSchema = z.object({
   length: z.number().positive().optional(),
   width: z.number().positive().optional(),
   height: z.number().positive().optional(),
+  cbm: z.number().positive().optional(),
   declaredValue: z.number().positive().optional(),
   specialInstructions: z.string().optional(),
   repId: z.string().uuid().optional().or(z.literal('')),
@@ -28,6 +29,7 @@ const updateOrderSchema = z.object({
   specialInstructions: z.string().optional(),
   packageDescription: z.string().min(5).optional(),
   weight: z.number().positive().max(1000).optional(),
+  cbm: z.number().positive().optional(),
   declaredValue: z.number().positive().optional(),
   repId: z.string().uuid().optional().or(z.literal('')).or(z.null()),
 });
