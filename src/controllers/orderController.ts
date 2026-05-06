@@ -9,10 +9,10 @@ import { generateOrderNumber, generateTrackingNumber, calculateShippingPrice, pa
 const createOrderSchema = z.object({
   pickupAddress: z.string().min(5),
   pickupCity: z.string().min(2),
-  pickupCountry: z.string().length(2),
+  pickupCountry: z.string().length(3),
   deliveryAddress: z.string().min(5),
   deliveryCity: z.string().min(2),
-  deliveryCountry: z.string().length(2),
+  deliveryCountry: z.string().length(3),
   packageDescription: z.string().min(5),
   weight: z.number().positive().max(1000),
   length: z.number().positive().optional(),
