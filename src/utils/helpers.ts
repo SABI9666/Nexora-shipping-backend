@@ -1,3 +1,5 @@
+import prisma from '../config/database';
+
 export function generateInvoiceNumber(): string {
   const date = new Date();
   const year = String(date.getFullYear()).slice(2);
@@ -12,11 +14,24 @@ export function generateQuotationNumber(): string {
   return `QT${year}-${String(seq).padStart(5, '0')}`;
 }
 
-export function generateOrderNumber(): string {
-  const date = new Date();
-  const year = date.getFullYear();
-  const random = Math.floor(Math.random() * 900000) + 100000;
-  return `NEX-${year}-${random}`;
+const ORDER_PREFIX = 'NEXDX';
+const ORDER_SEQ_PAD = 5;
+
+export async function generateOrderNumber(): Promise<string> {
+  const year = new Date().getFullYear();
+  const prefix = `${ORDER_PREFIX}-${year}-`;
+
+  const last = await prisma.order.findFirst({
+    where: { orderNumber: { startsWith: prefix } },
+    orderBy: { orderNumber: 'desc' },
+    select: { orderNumber: true },
+  });
+
+  const lastSeq = last
+    ? parseInt(last.orderNumber.slice(prefix.length), 10) || 0
+    : 0;
+  const next = lastSeq + 1;
+  return `${prefix}${String(next).padStart(ORDER_SEQ_PAD, '0')}`;
 }
 
 export function generateTrackingNumber(): string {

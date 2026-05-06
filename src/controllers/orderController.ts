@@ -57,17 +57,31 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
     const price = calculateShippingPrice(rest.weight, rest.pickupCountry, rest.deliveryCountry);
     const repFields = await resolveRep(rawRepId || null);
 
-    const order = await prisma.order.create({
-      data: {
-        ...rest,
-        orderNumber: generateOrderNumber(),
-        price,
-        userId: req.user!.id,
-        repId: repFields.repId,
-        repName: repFields.repName,
-      },
-      include: orderInclude,
-    });
+    let order;
+    let attempt = 0;
+    while (true) {
+      try {
+        order = await prisma.order.create({
+          data: {
+            ...rest,
+            orderNumber: await generateOrderNumber(),
+            price,
+            userId: req.user!.id,
+            repId: repFields.repId,
+            repName: repFields.repName,
+          },
+          include: orderInclude,
+        });
+        break;
+      } catch (e: unknown) {
+        const code = (e as { code?: string }).code;
+        if (code === 'P2002' && attempt < 4) {
+          attempt += 1;
+          continue;
+        }
+        throw e;
+      }
+    }
 
     res.status(201).json({
       success: true,
