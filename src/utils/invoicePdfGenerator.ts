@@ -95,10 +95,10 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
 
     // ===== Header: INVOICE title + TRN (right-aligned) =====
     doc.fillColor(NAVY).font('Helvetica-BoldOblique').fontSize(20)
-      .text('INVOICE', left, y, { align: 'right', width: fullW });
+      .text('INVOICE', left, y, { align: 'right', width: fullW, lineBreak: false });
     if (invoice.companyTrn) {
       doc.fillColor(NAVY).font('Helvetica-Oblique').fontSize(11)
-        .text(`TRN:${invoice.companyTrn}`, left, y + 24, { align: 'right', width: fullW });
+        .text(`TRN:${invoice.companyTrn}`, left, y + 24, { align: 'right', width: fullW, lineBreak: false });
     }
 
     // ===== Bill To + Invoice Meta (two-column box) =====
@@ -118,11 +118,11 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
 
     // Bill-To content
     doc.fillColor(TEXT).font('Helvetica-Bold').fontSize(10)
-      .text(invoice.billToName, left + 6, y + 6, { width: billW - 12 });
+      .text(invoice.billToName, left + 6, y + 6, { width: billW - 12, lineBreak: false, ellipsis: true });
     doc.fillColor(TEXT).font('Helvetica').fontSize(9)
-      .text(invoice.billToAddress, left + 6, y + 22, { width: billW - 12 })
+      .text(invoice.billToAddress, left + 6, y + 22, { width: billW - 12, lineBreak: false, ellipsis: true })
       .text(`${invoice.billToCity}${invoice.billToCity && invoice.billToCountry ? ', ' : ''}${invoice.billToCountry}`,
-            left + 6, y + 36, { width: billW - 12 });
+            left + 6, y + 36, { width: billW - 12, lineBreak: false, ellipsis: true });
 
     // Meta rows: Invoice No, Invoice Date, Currency, Job No
     const metaRowH = headerH / 4;
@@ -131,9 +131,9 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       if (idx > 0) doc.moveTo(metaX, ry).lineTo(right, ry).strokeColor(LIGHT).stroke();
       doc.moveTo(metaX + metaLabelW, ry).lineTo(metaX + metaLabelW, ry + metaRowH).strokeColor(LIGHT).stroke();
       doc.fillColor(TEXT).font('Helvetica-Bold').fontSize(9)
-        .text(label, metaX + 4, ry + 4, { width: metaLabelW - 6 });
+        .text(label, metaX + 4, ry + 4, { width: metaLabelW - 6, lineBreak: false });
       doc.fillColor(TEXT).font('Helvetica').fontSize(9)
-        .text(value, metaX + metaLabelW + 4, ry + 4, { width: metaValW - 8 });
+        .text(value, metaX + metaLabelW + 4, ry + 4, { width: metaValW - 8, lineBreak: false, ellipsis: true });
     };
     drawMetaRow(0, 'Invoice No', invoice.invoiceNumber);
     drawMetaRow(1, 'Invoice Date', fmtDate(invoice.invoiceDate));
@@ -152,9 +152,11 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     const drawShipPair = (col: number, idx: number, label: string, value: string) => {
       const ry = y + idx * 14 + 4;
       doc.fillColor(TEXT).font('Helvetica-Bold').fontSize(8.5)
-        .text(label, col, ry, { width: labelW, continued: false });
+        .text(label, col, ry, { width: labelW, lineBreak: false });
       doc.fillColor(TEXT).font('Helvetica').fontSize(8.5)
-        .text(': ' + (value || ''), col + labelW, ry);
+        .text(': ' + (value || ''), col + labelW, ry, {
+          width: fullW * 0.5 - labelW - 6, lineBreak: false, ellipsis: true,
+        });
     };
 
     drawShipPair(colA, 0, 'Origin/POR', invoice.originPort ?? '');
@@ -203,7 +205,7 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     const BANK_HEADER_H = 16;
     const BANK_BODY_H = 96;              // 6 rows × 16pt
     const SIG_HEADER_H = 16;
-    const SIG_BODY_H = 28;
+    const SIG_BODY_H = 24;
     const FOOTER_BLOCK_H =
       TOTALS_STRIP_H + BANK_HEADER_H + BANK_BODY_H + SIG_HEADER_H + SIG_BODY_H;
 
@@ -211,7 +213,9 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       doc.lineWidth(0.6).strokeColor(TEXT).rect(left, yy, fullW, headRowH).fillAndStroke(HEAD_BG, TEXT);
       doc.fillColor(TEXT).font('Helvetica-Bold').fontSize(8);
       cols.forEach((c, i) => {
-        doc.text(c.label, colX[i] + 3, yy + 5, { width: c.w - 6, align: c.align });
+        doc.text(c.label, colX[i] + 3, yy + 5, {
+          width: c.w - 6, align: c.align, lineBreak: false, ellipsis: true,
+        });
         if (i > 0) doc.moveTo(colX[i], yy).lineTo(colX[i], yy + headRowH).strokeColor(TEXT).stroke();
       });
     };
@@ -256,7 +260,9 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       ];
       doc.fillColor(TEXT).font('Helvetica').fontSize(8.5);
       cells.forEach((v, i) => {
-        doc.text(v, colX[i] + 3, y + 3, { width: cols[i].w - 6, align: cols[i].align });
+        doc.text(v, colX[i] + 3, y + 3, {
+          width: cols[i].w - 6, align: cols[i].align, lineBreak: false, ellipsis: true,
+        });
       });
       y += rowH;
     });
@@ -278,7 +284,7 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     doc.lineWidth(0.6).rect(left, y, fullW, refRowH).stroke();
     doc.fillColor(TEXT).font('Helvetica-Bold').fontSize(8.5)
       .text(`Cust Ref: ${invoice.customerRef ?? `INV- ${invoice.invoiceNumber}`}`,
-        left, y + 3, { width: fullW * 0.7, align: 'center' });
+        left, y + 3, { width: fullW * 0.7, align: 'center', lineBreak: false });
     // Right block: Net / Vat / Grand
     const totalsX = left + fullW * 0.7;
     const totalsLabelW = fullW * 0.18;
@@ -286,24 +292,24 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     doc.moveTo(totalsX, y).lineTo(totalsX, y + refRowH).stroke();
     doc.moveTo(totalsX + totalsLabelW, y).lineTo(totalsX + totalsLabelW, y + refRowH).stroke();
     doc.font('Helvetica-Bold').fontSize(9).fillColor(TEXT)
-      .text('Net Amount', totalsX + 3, y + 3, { width: totalsLabelW - 6, align: 'right' });
+      .text('Net Amount', totalsX + 3, y + 3, { width: totalsLabelW - 6, align: 'right', lineBreak: false });
     doc.font('Helvetica-Bold').fontSize(9)
-      .text(fmt(invoice.subtotal), totalsX + totalsLabelW + 3, y + 3, { width: totalsValW - 6, align: 'right' });
+      .text(fmt(invoice.subtotal), totalsX + totalsLabelW + 3, y + 3, { width: totalsValW - 6, align: 'right', lineBreak: false });
     y += refRowH;
 
     // VAT row
     doc.lineWidth(0.6).rect(left, y, fullW, refRowH).stroke();
     if (invoice.amountInWords) {
       doc.font('Helvetica').fontSize(8.5).fillColor(TEXT)
-        .text(invoice.amountInWords, left, y + 3, { width: fullW * 0.7, align: 'center' });
+        .text(invoice.amountInWords, left, y + 3, { width: fullW * 0.7, align: 'center', lineBreak: false });
     }
     doc.moveTo(totalsX, y).lineTo(totalsX, y + refRowH).stroke();
     doc.moveTo(totalsX + totalsLabelW, y).lineTo(totalsX + totalsLabelW, y + refRowH).stroke();
     doc.font('Helvetica-Bold').fontSize(9)
-      .text('Vat Amount', totalsX + 3, y + 3, { width: totalsLabelW - 6, align: 'right' });
+      .text('Vat Amount', totalsX + 3, y + 3, { width: totalsLabelW - 6, align: 'right', lineBreak: false });
     doc.font('Helvetica-Bold').fontSize(9)
       .text(invoice.taxAmount ? fmt(invoice.taxAmount) : '', totalsX + totalsLabelW + 3, y + 3,
-        { width: totalsValW - 6, align: 'right' });
+        { width: totalsValW - 6, align: 'right', lineBreak: false });
     y += refRowH;
 
     // Grand Total row
@@ -311,9 +317,9 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     doc.moveTo(totalsX, y).lineTo(totalsX, y + refRowH).stroke();
     doc.moveTo(totalsX + totalsLabelW, y).lineTo(totalsX + totalsLabelW, y + refRowH).stroke();
     doc.font('Helvetica-Bold').fontSize(10)
-      .text('Grand Total', totalsX + 3, y + 3, { width: totalsLabelW - 6, align: 'right' });
+      .text('Grand Total', totalsX + 3, y + 3, { width: totalsLabelW - 6, align: 'right', lineBreak: false });
     doc.font('Helvetica-Bold').fontSize(10)
-      .text(fmt(invoice.total), totalsX + totalsLabelW + 3, y + 3, { width: totalsValW - 6, align: 'right' });
+      .text(fmt(invoice.total), totalsX + totalsLabelW + 3, y + 3, { width: totalsValW - 6, align: 'right', lineBreak: false });
     y += refRowH;
 
     // ===== Bank Details / Payment Terms two-column block =====
@@ -326,8 +332,8 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     doc.rect(left, y, fullW, bankHeaderH).fillAndStroke(HEAD_BG, TEXT);
     doc.moveTo(left + fullW / 2, y).lineTo(left + fullW / 2, y + bankHeaderH).stroke();
     doc.fillColor(TEXT).font('Helvetica-Bold').fontSize(10)
-      .text('Bank Details', left, y + 3, { width: fullW / 2, align: 'center' });
-    doc.text('Payment Terms', left + fullW / 2, y + 3, { width: fullW / 2, align: 'center' });
+      .text('Bank Details', left, y + 3, { width: fullW / 2, align: 'center', lineBreak: false });
+    doc.text('Payment Terms', left + fullW / 2, y + 3, { width: fullW / 2, align: 'center', lineBreak: false });
     y += bankHeaderH;
 
     doc.rect(left, y, fullW, bankBodyH).stroke();
@@ -348,14 +354,18 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       if (i > 0) doc.moveTo(left, ry).lineTo(left + fullW / 2, ry).strokeColor(LIGHT).stroke();
       doc.moveTo(left + bankLabelW, ry).lineTo(left + bankLabelW, ry + bankRowH).strokeColor(LIGHT).stroke();
       doc.fillColor(TEXT).font('Helvetica-Bold').fontSize(9)
-        .text(r[0], left + 4, ry + 5, { width: bankLabelW - 6 });
+        .text(r[0], left + 4, ry + 4, { width: bankLabelW - 6, lineBreak: false });
       doc.fillColor(TEXT).font('Helvetica').fontSize(9)
-        .text(r[1] ?? '', left + bankLabelW + 4, ry + 5, { width: fullW / 2 - bankLabelW - 8 });
+        .text(r[1] ?? '', left + bankLabelW + 4, ry + 4, {
+          width: fullW / 2 - bankLabelW - 8, lineBreak: false, ellipsis: true,
+        });
     });
 
     if (invoice.paymentTerms) {
       doc.fillColor(TEXT).font('Helvetica').fontSize(9)
-        .text(invoice.paymentTerms, left + fullW / 2 + 4, y + 4, { width: fullW / 2 - 8 });
+        .text(invoice.paymentTerms, left + fullW / 2 + 4, y + 4, {
+          width: fullW / 2 - 8, lineBreak: false, ellipsis: true,
+        });
     }
 
     y += bankBodyH;
@@ -365,22 +375,25 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     const sigBodyH = SIG_BODY_H;
     doc.rect(left, y, fullW, sigHeaderH).stroke();
     doc.fillColor(TEXT).font('Helvetica-Bold').fontSize(9)
-      .text(`For ${invoice.shipFromName.toUpperCase()}`, left + 4, y + 4);
+      .text(`For ${invoice.shipFromName.toUpperCase()}`, left + 4, y + 4, {
+        width: fullW - 8, lineBreak: false, ellipsis: true,
+      });
     y += sigHeaderH;
 
     doc.rect(left, y, fullW, sigBodyH).stroke();
     doc.moveTo(left + fullW / 2, y).lineTo(left + fullW / 2, y + sigBodyH).stroke();
     doc.fillColor(TEXT).font('Helvetica-Bold').fontSize(9)
-      .text('Prepared By', left + 4, y + 4)
-      .text('Approved By', left + fullW / 2 + 4, y + 4);
+      .text('Prepared By', left + 4, y + 4, { width: fullW / 2 - 8, lineBreak: false })
+      .text('Approved By', left + fullW / 2 + 4, y + 4, { width: fullW / 2 - 8, lineBreak: false });
 
-    // Notes (if any) below
-    if (invoice.notes) {
-      y += sigBodyH + 14;
-      if (y + 30 > contentBottom(doc)) { doc.addPage(); y = CONTENT_TOP; }
-      doc.fillColor(GREY).font('Helvetica-Bold').fontSize(8).text('NOTES', left, y);
-      doc.fillColor(TEXT).font('Helvetica').fontSize(9)
-        .text(invoice.notes, left, y + 12, { width: fullW });
+    // Notes (if any) below — only render when actually present
+    if (invoice.notes && invoice.notes.trim()) {
+      const notesY = y + sigBodyH + 14;
+      if (notesY + 30 <= contentBottom(doc)) {
+        doc.fillColor(GREY).font('Helvetica-Bold').fontSize(8).text('NOTES', left, notesY);
+        doc.fillColor(TEXT).font('Helvetica').fontSize(9)
+          .text(invoice.notes, left, notesY + 12, { width: fullW });
+      }
     }
 
     doc.end();
