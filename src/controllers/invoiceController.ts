@@ -4,7 +4,7 @@ import { InvoiceStatus, Role } from '@prisma/client';
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../types';
-import { generateInvoiceNumber, paginate } from '../utils/helpers';
+import { generateInvoiceNumber, deriveJobNumber, paginate } from '../utils/helpers';
 import { generateInvoiceWordBuffer } from '../utils/wordGenerator';
 import { generateInvoicePdfBuffer } from '../utils/invoicePdfGenerator';
 import { amountToWords } from '../utils/numberToWords';
@@ -139,72 +139,84 @@ export const createInvoice = async (req: AuthRequest, res: Response, next: NextF
     const enriched = enrichItems(data.items);
     const { subtotal, taxAmount, total } = calcTotals(enriched, data.shippingCost);
     const amountInWords = amountToWords(total, data.currency);
-    const invoiceNumber = generateInvoiceNumber();
 
-    const invoice = await prisma.invoice.create({
-      data: {
-        invoiceNumber,
-        status: data.status ?? 'DRAFT',
-        invoiceDate: new Date(),
-        dueDate: data.dueDate ? new Date(data.dueDate) : null,
-        billToName: data.billToName,
-        billToAddress: data.billToAddress,
-        billToCity: data.billToCity,
-        billToCountry: data.billToCountry,
-        billToEmail: data.billToEmail || null,
-        billToPhone: data.billToPhone || null,
-        shipFromName: data.shipFromName ?? 'Nexora Express',
-        shipFromAddress: data.shipFromAddress ?? '1 Nexora Way',
-        shipFromCity: data.shipFromCity ?? 'London',
-        shipFromCountry: data.shipFromCountry ?? 'GB',
-        companyTrn: data.companyTrn || null,
-        jobNo: data.jobNo || null,
-        originPort: data.originPort || null,
-        destPort: data.destPort || null,
-        masterBl: data.masterBl || null,
-        houseBl: data.houseBl || null,
-        commodity: data.commodity || null,
-        boeNumber: data.boeNumber || null,
-        grossWeight: data.grossWeight || null,
-        volume: data.volume || null,
-        packages: data.packages || null,
-        shipperName: data.shipperName || null,
-        consigneeName: data.consigneeName || null,
-        customerRef: data.customerRef || `INV-${invoiceNumber}`,
-        bankName: data.bankName || null,
-        bankAddress: data.bankAddress || null,
-        accountName: data.accountName || null,
-        accountNumber: data.accountNumber || null,
-        iban: data.iban || null,
-        swiftCode: data.swiftCode || null,
-        currency: data.currency,
-        taxRate: data.taxRate,
-        taxAmount,
-        shippingCost: data.shippingCost,
-        subtotal,
-        total,
-        amountInWords,
-        paymentTerms: data.paymentTerms || null,
-        notes: data.notes || null,
-        orderId: data.orderId || null,
-        userId: req.user!.id,
-        items: {
-          create: enriched.map((it) => ({
-            description: it.description,
-            quantity: it.quantity,
-            unitPrice: it.unitPrice,
-            amount: it.amount,
-            lineCurrency: it.lineCurrency || data.currency,
-            exchangeRate: it.exchangeRate,
-            vatPercent: it.vatPercent,
-            vatAmount: it.vatAmount,
-            totalInBase: it.totalInBase,
-            remarks: it.remarks || null,
-          })),
-        },
-      },
-      include: { items: true, orderRef: { select: { orderNumber: true } } },
-    });
+    let invoice;
+    let attempt = 0;
+    while (true) {
+      const invoiceNumber = await generateInvoiceNumber();
+      const jobNo = data.jobNo || deriveJobNumber(invoiceNumber);
+      try {
+        invoice = await prisma.invoice.create({
+          data: {
+            invoiceNumber,
+            status: data.status ?? 'DRAFT',
+            invoiceDate: new Date(),
+            dueDate: data.dueDate ? new Date(data.dueDate) : null,
+            billToName: data.billToName,
+            billToAddress: data.billToAddress,
+            billToCity: data.billToCity,
+            billToCountry: data.billToCountry,
+            billToEmail: data.billToEmail || null,
+            billToPhone: data.billToPhone || null,
+            shipFromName: data.shipFromName ?? 'Nexora Express',
+            shipFromAddress: data.shipFromAddress ?? '1 Nexora Way',
+            shipFromCity: data.shipFromCity ?? 'London',
+            shipFromCountry: data.shipFromCountry ?? 'GB',
+            companyTrn: data.companyTrn || null,
+            jobNo,
+            originPort: data.originPort || null,
+            destPort: data.destPort || null,
+            masterBl: data.masterBl || null,
+            houseBl: data.houseBl || null,
+            commodity: data.commodity || null,
+            boeNumber: data.boeNumber || null,
+            grossWeight: data.grossWeight || null,
+            volume: data.volume || null,
+            packages: data.packages || null,
+            shipperName: data.shipperName || null,
+            consigneeName: data.consigneeName || null,
+            customerRef: data.customerRef || `INV-${invoiceNumber}`,
+            bankName: data.bankName || null,
+            bankAddress: data.bankAddress || null,
+            accountName: data.accountName || null,
+            accountNumber: data.accountNumber || null,
+            iban: data.iban || null,
+            swiftCode: data.swiftCode || null,
+            currency: data.currency,
+            taxRate: data.taxRate,
+            taxAmount,
+            shippingCost: data.shippingCost,
+            subtotal,
+            total,
+            amountInWords,
+            paymentTerms: data.paymentTerms || null,
+            notes: data.notes || null,
+            orderId: data.orderId || null,
+            userId: req.user!.id,
+            items: {
+              create: enriched.map((it) => ({
+                description: it.description,
+                quantity: it.quantity,
+                unitPrice: it.unitPrice,
+                amount: it.amount,
+                lineCurrency: it.lineCurrency || data.currency,
+                exchangeRate: it.exchangeRate,
+                vatPercent: it.vatPercent,
+                vatAmount: it.vatAmount,
+                totalInBase: it.totalInBase,
+                remarks: it.remarks || null,
+              })),
+            },
+          },
+          include: { items: true, orderRef: { select: { orderNumber: true } } },
+        });
+        break;
+      } catch (e: unknown) {
+        const code = (e as { code?: string }).code;
+        if (code === 'P2002' && attempt < 4) { attempt += 1; continue; }
+        throw e;
+      }
+    }
 
     res.status(201).json({ success: true, message: 'Invoice created', data: invoice });
   } catch (error) {
