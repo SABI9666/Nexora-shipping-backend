@@ -197,13 +197,40 @@ model Invoice {
   shipFromCity    String @default("London")
   shipFromCountry String @default("GB")
 
+  // Issuer / company
+  companyTrn   String?
+
+  // Shipment header
+  jobNo          String?
+  originPort     String?
+  destPort       String?
+  masterBl       String?
+  houseBl        String?
+  commodity      String?
+  boeNumber      String?
+  grossWeight    String?
+  volume         String?
+  packages       String?
+  shipperName    String?
+  consigneeName  String?
+  customerRef    String?
+
   // Financial
-  currency     String @default("USD")
+  currency     String @default("AED")
   subtotal     Float  @default(0)
   taxRate      Float  @default(0)
   taxAmount    Float  @default(0)
   shippingCost Float  @default(0)
   total        Float  @default(0)
+  amountInWords String?
+
+  // Bank details
+  bankName      String?
+  bankAddress   String?
+  accountName   String?
+  accountNumber String?
+  iban          String?
+  swiftCode     String?
 
   // Meta
   paymentTerms String?
@@ -223,12 +250,18 @@ model Invoice {
 }
 
 model InvoiceItem {
-  id          String  @id @default(uuid())
-  invoiceId   String
-  description String
-  quantity    Float   @default(1)
-  unitPrice   Float
-  amount      Float
+  id             String  @id @default(uuid())
+  invoiceId      String
+  description    String
+  quantity       Float   @default(1)
+  unitPrice      Float
+  amount         Float
+  lineCurrency   String?
+  exchangeRate   Float?  @default(1)
+  vatPercent     Float?  @default(0)
+  vatAmount      Float?  @default(0)
+  totalInBase    Float?
+  remarks        String?
 
   invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
