@@ -10,6 +10,7 @@ const SEED_BANKS = [
     iban: 'AE060030014505966920001',
     swiftCode: 'ADCBAEAA',
     currency: 'AED',
+    companyTrn: '105413106300003',
     isDefault: true,
   },
 ];

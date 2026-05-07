@@ -13,6 +13,7 @@ const createSchema = z.object({
   iban: z.string().optional(),
   swiftCode: z.string().optional(),
   currency: z.string().optional(),
+  companyTrn: z.string().optional(),
   isDefault: z.boolean().optional(),
 });
 
