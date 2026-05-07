@@ -192,14 +192,26 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       for (const c of cols) { colX.push(x); x += c.w; }
     }
 
-    const headRowH = 22;
-    const rowH = 18;
+    // Tighter row metrics so up to ~25 lines fit on a single A4 page.
+    const headRowH = 20;
+    const rowH = 16;
+
+    // Reserve enough space below the items table for the rest of the
+    // invoice (cust-ref strip + totals + bank block + signature). The
+    // numbers below mirror the heights drawn after the items loop.
+    const TOTALS_STRIP_H = 16 * 3;       // 3 strips of 16pt
+    const BANK_HEADER_H = 16;
+    const BANK_BODY_H = 96;              // 6 rows × 16pt
+    const SIG_HEADER_H = 16;
+    const SIG_BODY_H = 28;
+    const FOOTER_BLOCK_H =
+      TOTALS_STRIP_H + BANK_HEADER_H + BANK_BODY_H + SIG_HEADER_H + SIG_BODY_H;
 
     const drawTableHead = (yy: number) => {
       doc.lineWidth(0.6).strokeColor(TEXT).rect(left, yy, fullW, headRowH).fillAndStroke(HEAD_BG, TEXT);
       doc.fillColor(TEXT).font('Helvetica-Bold').fontSize(8);
       cols.forEach((c, i) => {
-        doc.text(c.label, colX[i] + 3, yy + 6, { width: c.w - 6, align: c.align });
+        doc.text(c.label, colX[i] + 3, yy + 5, { width: c.w - 6, align: c.align });
         if (i > 0) doc.moveTo(colX[i], yy).lineTo(colX[i], yy + headRowH).strokeColor(TEXT).stroke();
       });
     };
@@ -208,11 +220,12 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     let tableTopForBorders = y;
     y += headRowH;
 
-    const firstRowY = y;
-
     invoice.items.forEach((it) => {
-      if (y + rowH > contentBottom(doc) - 200) {
-        // bottom-border the body so far, new page, redraw header
+      // Page-break only when this row genuinely won't fit ABOVE the reserved
+      // footer block. With small invoices this never triggers and everything
+      // stays on a single page.
+      if (y + rowH > contentBottom(doc) - FOOTER_BLOCK_H) {
+        // Close the body box on the page we're leaving
         doc.lineWidth(0.6).strokeColor(TEXT)
           .rect(left, tableTopForBorders, fullW, y - tableTopForBorders).stroke();
         cols.forEach((_c, i) => {
@@ -243,14 +256,16 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       ];
       doc.fillColor(TEXT).font('Helvetica').fontSize(8.5);
       cells.forEach((v, i) => {
-        doc.text(v, colX[i] + 3, y + 4, { width: cols[i].w - 6, align: cols[i].align });
+        doc.text(v, colX[i] + 3, y + 3, { width: cols[i].w - 6, align: cols[i].align });
       });
       y += rowH;
     });
 
-    // Pad to a minimum body height like the sample
-    const minBodyBottom = firstRowY + rowH * 12;
-    if (y < minBodyBottom) y = minBodyBottom;
+    // Pad the items area only enough to push the footer block to the page
+    // bottom — never beyond. If the table is short, the footer rises so the
+    // whole invoice still occupies one A4 page.
+    const targetBodyBottom = contentBottom(doc) - FOOTER_BLOCK_H;
+    if (y < targetBodyBottom) y = targetBodyBottom;
 
     // Border the entire body block
     doc.lineWidth(0.6).strokeColor(TEXT).rect(left, tableTopForBorders, fullW, y - tableTopForBorders).stroke();
@@ -302,12 +317,12 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     y += refRowH;
 
     // ===== Bank Details / Payment Terms two-column block =====
-    if (y + 130 > contentBottom(doc)) {
+    if (y + BANK_HEADER_H + BANK_BODY_H + SIG_HEADER_H + SIG_BODY_H > contentBottom(doc)) {
       doc.addPage();
       y = CONTENT_TOP;
     }
-    const bankHeaderH = 16;
-    const bankBodyH = 120;
+    const bankHeaderH = BANK_HEADER_H;
+    const bankBodyH = BANK_BODY_H;
     doc.rect(left, y, fullW, bankHeaderH).fillAndStroke(HEAD_BG, TEXT);
     doc.moveTo(left + fullW / 2, y).lineTo(left + fullW / 2, y + bankHeaderH).stroke();
     doc.fillColor(TEXT).font('Helvetica-Bold').fontSize(10)
@@ -318,7 +333,7 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     doc.rect(left, y, fullW, bankBodyH).stroke();
     doc.moveTo(left + fullW / 2, y).lineTo(left + fullW / 2, y + bankBodyH).stroke();
 
-    const bankRowH = 20;
+    const bankRowH = BANK_BODY_H / 6; // = 16pt, matches reserved height
     const bankLabelW = 110;
     const bankRows: [string, string | null | undefined][] = [
       ['Bank Name', invoice.bankName],
@@ -346,8 +361,8 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     y += bankBodyH;
 
     // ===== Footer signature block =====
-    const sigHeaderH = 16;
-    const sigBodyH = 36;
+    const sigHeaderH = SIG_HEADER_H;
+    const sigBodyH = SIG_BODY_H;
     doc.rect(left, y, fullW, sigHeaderH).stroke();
     doc.fillColor(TEXT).font('Helvetica-Bold').fontSize(9)
       .text(`For ${invoice.shipFromName.toUpperCase()}`, left + 4, y + 4);
