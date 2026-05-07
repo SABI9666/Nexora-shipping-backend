@@ -129,11 +129,14 @@ export const createInvoice = async (req: AuthRequest, res: Response, next: NextF
     const data = createInvoiceSchema.parse(req.body);
     const isAdmin = req.user!.role === Role.ADMIN;
 
+    let linkedOrderNumber: string | null = null;
     if (data.orderId) {
       const order = await prisma.order.findFirst({
         where: { id: data.orderId, ...(isAdmin ? {} : { userId: req.user!.id }) },
+        select: { id: true, orderNumber: true },
       });
       if (!order) throw new AppError('Order not found or access denied', 404);
+      linkedOrderNumber = order.orderNumber;
     }
 
     const enriched = enrichItems(data.items);
@@ -144,7 +147,7 @@ export const createInvoice = async (req: AuthRequest, res: Response, next: NextF
     let attempt = 0;
     while (true) {
       const invoiceNumber = await generateInvoiceNumber();
-      const jobNo = data.jobNo || deriveJobNumber(invoiceNumber);
+      const jobNo = data.jobNo || linkedOrderNumber || deriveJobNumber(invoiceNumber);
       try {
         invoice = await prisma.invoice.create({
           data: {
