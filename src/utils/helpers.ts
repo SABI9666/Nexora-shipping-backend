@@ -2,7 +2,7 @@ import prisma from '../config/database';
 
 const INVOICE_PREFIX = 'NEX';
 const INVOICE_SEQ_PAD = 5;
-const JOB_PREFIX = 'NEXDXLTR';
+const JOB_PREFIX = 'NEXDX';
 
 export async function generateInvoiceNumber(): Promise<string> {
   const yy = String(new Date().getFullYear()).slice(2);
