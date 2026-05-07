@@ -20,8 +20,10 @@ import customerGroupRoutes from './routes/customerGroups';
 import accountRoutes from './routes/accounts';
 import itemMasterRoutes from './routes/itemMaster';
 import salespersonRoutes from './routes/salespersons';
+import chargeItemRoutes from './routes/chargeItems';
 import { errorHandler } from './middleware/errorHandler';
 import { ensureStandardAccountGroups } from './utils/bootstrapAccountGroups';
+import { ensureStandardChargeItems } from './utils/bootstrapChargeItems';
 
 const app = express();
 
@@ -108,6 +110,7 @@ app.use('/api/customer-groups', customerGroupRoutes);
 app.use('/api/accounts', accountRoutes);
 app.use('/api/items', itemMasterRoutes);
 app.use('/api/salespersons', salespersonRoutes);
+app.use('/api/charge-items', chargeItemRoutes);
 
 app.use('*', (_req, res) => {
   res.status(404).json({ success: false, message: 'Route not found' });
@@ -121,6 +124,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Nexora Shipping API running on port ${PORT}`);
   console.log(`📦 Environment: ${process.env.NODE_ENV || 'development'}`);
   ensureStandardAccountGroups();
+  ensureStandardChargeItems();
 });
 
 export default app;
