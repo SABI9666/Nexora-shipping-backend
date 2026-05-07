@@ -408,3 +408,15 @@ model ItemMaster {
 
   @@map("item_masters")
 }
+
+model ChargeItem {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  description String?
+  defaultRate Float?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("charge_items")
+}
