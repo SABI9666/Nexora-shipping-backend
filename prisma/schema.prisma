@@ -453,3 +453,20 @@ model ChargeItem {
 
   @@map("charge_items")
 }
+
+model BankAccount {
+  id            String   @id @default(uuid())
+  label         String   @unique
+  bankName      String
+  bankAddress   String?
+  accountName   String
+  accountNumber String
+  iban          String?
+  swiftCode     String?
+  currency      String?
+  isDefault     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("bank_accounts")
+}
