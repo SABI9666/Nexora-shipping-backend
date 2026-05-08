@@ -96,10 +96,9 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     // ===== Header: INVOICE title + TRN (right-aligned) =====
     doc.fillColor(NAVY).font('Helvetica-BoldOblique').fontSize(20)
       .text('INVOICE', left, y, { align: 'right', width: fullW, lineBreak: false });
-    if (invoice.companyTrn) {
-      doc.fillColor(NAVY).font('Helvetica-Oblique').fontSize(11)
-        .text(`TRN:${invoice.companyTrn}`, left, y + 24, { align: 'right', width: fullW, lineBreak: false });
-    }
+    const trn = invoice.companyTrn || '105413106300003';
+    doc.fillColor(NAVY).font('Helvetica-Oblique').fontSize(11)
+      .text(`TRN:${trn}`, left, y + 24, { align: 'right', width: fullW, lineBreak: false });
 
     // ===== Bill To + Invoice Meta (two-column box) =====
     y += 50;
