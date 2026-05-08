@@ -14,7 +14,7 @@ const createOrderSchema = z.object({
   deliveryCity: z.string().min(2),
   deliveryCountry: z.string().length(3),
   packageDescription: z.string().min(5),
-  weight: z.number().positive().max(1000),
+  weight: z.number().positive(),
   length: z.number().positive().optional(),
   width: z.number().positive().optional(),
   height: z.number().positive().optional(),
