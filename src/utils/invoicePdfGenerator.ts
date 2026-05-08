@@ -236,57 +236,57 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     drawTableHead(y);
     y += headRowH;
 
-    // Plan how many items each page receives. Goal: avoid the empty-bottom-of-
-    // page-1 problem by filling each page completely except the last, which
-    // also has to fit the totals/bank/signature footer. The split is computed
-    // up-front so the per-row loop just reads from `pageBreaks`.
+    // Plan how many items each page receives. The trick: the footer reserve
+    // only applies to the LAST page (it doesn't render on earlier pages), so
+    // page 1 can pack items up to the full page height when more pages will
+    // follow. We pre-compute break points up-front so the per-row loop is
+    // dumb.
     const items = invoice.items;
     const pageCapFull = Math.max(1, Math.floor((contentBottom(doc) - CONTENT_TOP - headRowH) / rowH));
-    const firstPageCapFull = Math.max(1, Math.floor((contentBottom(doc) - y - 0) / rowH));
+    const firstPageCapFull = Math.max(1, Math.floor((contentBottom(doc) - y) / rowH));
     const lastPageCapWithFooter = Math.max(1, Math.floor((contentBottom(doc) - CONTENT_TOP - headRowH - FOOTER_BLOCK_H) / rowH));
     const firstPageCapWithFooter = Math.max(1, Math.floor((contentBottom(doc) - y - FOOTER_BLOCK_H) / rowH));
 
     const breakAfter = new Set<number>(); // 0-based item indices after which to add a page
 
-    if (items.length <= firstPageCapWithFooter) {
-      // Everything (items + footer) fits on a single page.
-    } else {
-      // Multi-page invoice. Fill page 1 to first-page full capacity, then
-      // continuation pages, and ensure the LAST page has at least 3 items
-      // alongside the footer (avoids a near-empty footer-only page).
-      let placed = 0;
-      let onPage = 0;
-      const pages: number[] = [];
-      pages.push(Math.min(items.length, firstPageCapFull));
-      placed += pages[0];
-      while (placed < items.length) {
-        const remaining = items.length - placed;
-        if (remaining <= lastPageCapWithFooter) {
-          pages.push(remaining);
-          placed += remaining;
-          break;
-        }
-        const take = Math.min(remaining, pageCapFull);
-        pages.push(take);
-        placed += take;
-      }
-      // If last page got 0 items (footer alone), borrow 3 from previous page.
-      if (pages[pages.length - 1] === 0 && pages.length >= 2) {
-        const borrow = Math.min(3, pages[pages.length - 2]);
-        pages[pages.length - 2] -= borrow;
-        pages[pages.length - 1] = borrow;
-      }
-      // Translate page sizes to break-after indices.
-      let cursor = 0;
-      for (let p = 0; p < pages.length - 1; p++) {
-        cursor += pages[p];
+    if (items.length > firstPageCapWithFooter) {
+      // Multi-page invoice: figure out where to break.
+      const MIN_LAST_PAGE_ITEMS = 3; // avoid an "almost-empty footer page"
+
+      if (items.length <= firstPageCapFull + lastPageCapWithFooter) {
+        // ── Two-page case ──
+        // Pack page 1 to its full capacity; whatever spills goes to the last
+        // page along with the footer. If the last page would have fewer than
+        // MIN_LAST_PAGE_ITEMS items, borrow from page 1 so the second sheet
+        // doesn't look empty.
+        let lastCount = items.length - firstPageCapFull;
+        if (lastCount < MIN_LAST_PAGE_ITEMS) lastCount = MIN_LAST_PAGE_ITEMS;
+        if (lastCount > lastPageCapWithFooter) lastCount = lastPageCapWithFooter;
+        const firstCount = items.length - lastCount;
+        breakAfter.add(firstCount - 1);
+      } else {
+        // ── Three+ page case ──
+        // Page 1 fills, continuation pages fill, last page reserves footer.
+        let cursor = firstPageCapFull;
         breakAfter.add(cursor - 1);
+        let remaining = items.length - cursor;
+        while (remaining > lastPageCapWithFooter) {
+          cursor += pageCapFull;
+          breakAfter.add(cursor - 1);
+          remaining -= pageCapFull;
+        }
+        // If the leftover for the last page is too small, shift the last
+        // break earlier so 3 items move down.
+        if (remaining > 0 && remaining < MIN_LAST_PAGE_ITEMS) {
+          const lastBreakIdx = Math.max(...breakAfter);
+          breakAfter.delete(lastBreakIdx);
+          breakAfter.add(lastBreakIdx - (MIN_LAST_PAGE_ITEMS - remaining));
+        }
       }
-      void onPage;
     }
 
     items.forEach((it, idx) => {
-      // Hard fallback: still page-break if the row genuinely won't fit
+      // Hard fallback: still page-break if a row genuinely won't fit
       if (y + rowH > contentBottom(doc)) {
         doc.addPage();
         y = CONTENT_TOP;
@@ -330,9 +330,23 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       .moveTo(left, y).lineTo(right, y).stroke();
     y += 14;
 
+    // Helper: open a fresh page if `needed` pts won't fit. Used before each
+    // footer section so a stray text() never lands in the brand footer band.
+    const ensureSpace = (needed: number) => {
+      if (y + needed > contentBottom(doc)) {
+        doc.addPage();
+        y = CONTENT_TOP;
+      }
+    };
+
     // ===================================================================
     //  TOTALS  (right-aligned card)
     // ===================================================================
+    // Totals + amount-in-words combined: ~80–110pt depending on optional rows
+    const totalsRowsCount = 1
+      + (invoice.taxAmount > 0 ? 1 : 0)
+      + (invoice.shippingCost > 0 ? 1 : 0);
+    ensureSpace(totalsRowsCount * 16 + 4 + 22 + (invoice.amountInWords ? 24 : 0));
     const totalsW = fullW * 0.42;
     const totalsX = right - totalsW;
 
@@ -395,6 +409,10 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       const leftColW = colW;
       const rightColW = colW;
 
+      // Bank can be 6 rows × 12pt + 14pt header + 18pt slack
+      const bankSectionHeight = 14 + Math.max(showPayment ? 14 : 0, bankRows.length * 12) + 18;
+      ensureSpace(bankSectionHeight + 56 /* + signature */);
+
       doc.fillColor(SUBTLE).font('Helvetica-Bold').fontSize(8)
         .text('PAYMENT TERMS', billX, y, { width: leftColW, characterSpacing: 1, lineBreak: false });
       doc.fillColor(SUBTLE).font('Helvetica-Bold').fontSize(8)
@@ -430,11 +448,7 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     // ===================================================================
     //  SIGNATURE  ·  Prepared / Approved
     // ===================================================================
-    if (y + 38 > contentBottom(doc)) {
-      // shouldn't happen with the FOOTER_BLOCK_H reserve; safety net only
-      doc.addPage();
-      y = CONTENT_TOP;
-    }
+    ensureSpace(56);
     doc.lineWidth(0.6).strokeColor(DIVIDER).moveTo(left, y).lineTo(right, y).stroke();
     y += 12;
     doc.fillColor(SUBTLE).font('Helvetica-Bold').fontSize(8)
