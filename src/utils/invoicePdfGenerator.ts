@@ -236,8 +236,58 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     drawTableHead(y);
     y += headRowH;
 
-    invoice.items.forEach((it, idx) => {
-      if (y + rowH > contentBottom(doc) - FOOTER_BLOCK_H) {
+    // Plan how many items each page receives. Goal: avoid the empty-bottom-of-
+    // page-1 problem by filling each page completely except the last, which
+    // also has to fit the totals/bank/signature footer. The split is computed
+    // up-front so the per-row loop just reads from `pageBreaks`.
+    const items = invoice.items;
+    const pageCapFull = Math.max(1, Math.floor((contentBottom(doc) - CONTENT_TOP - headRowH) / rowH));
+    const firstPageCapFull = Math.max(1, Math.floor((contentBottom(doc) - y - 0) / rowH));
+    const lastPageCapWithFooter = Math.max(1, Math.floor((contentBottom(doc) - CONTENT_TOP - headRowH - FOOTER_BLOCK_H) / rowH));
+    const firstPageCapWithFooter = Math.max(1, Math.floor((contentBottom(doc) - y - FOOTER_BLOCK_H) / rowH));
+
+    const breakAfter = new Set<number>(); // 0-based item indices after which to add a page
+
+    if (items.length <= firstPageCapWithFooter) {
+      // Everything (items + footer) fits on a single page.
+    } else {
+      // Multi-page invoice. Fill page 1 to first-page full capacity, then
+      // continuation pages, and ensure the LAST page has at least 3 items
+      // alongside the footer (avoids a near-empty footer-only page).
+      let placed = 0;
+      let onPage = 0;
+      const pages: number[] = [];
+      pages.push(Math.min(items.length, firstPageCapFull));
+      placed += pages[0];
+      while (placed < items.length) {
+        const remaining = items.length - placed;
+        if (remaining <= lastPageCapWithFooter) {
+          pages.push(remaining);
+          placed += remaining;
+          break;
+        }
+        const take = Math.min(remaining, pageCapFull);
+        pages.push(take);
+        placed += take;
+      }
+      // If last page got 0 items (footer alone), borrow 3 from previous page.
+      if (pages[pages.length - 1] === 0 && pages.length >= 2) {
+        const borrow = Math.min(3, pages[pages.length - 2]);
+        pages[pages.length - 2] -= borrow;
+        pages[pages.length - 1] = borrow;
+      }
+      // Translate page sizes to break-after indices.
+      let cursor = 0;
+      for (let p = 0; p < pages.length - 1; p++) {
+        cursor += pages[p];
+        breakAfter.add(cursor - 1);
+      }
+      void onPage;
+    }
+
+    items.forEach((it, idx) => {
+      // Hard fallback: still page-break if the row genuinely won't fit
+      if (y + rowH > contentBottom(doc)) {
         doc.addPage();
         y = CONTENT_TOP;
         drawTableHead(y);
@@ -264,6 +314,15 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
         });
       });
       y += rowH;
+
+      // Planned page break (from layout planner above). Skip break after the
+      // very last item — footer renders next, in flow.
+      if (breakAfter.has(idx) && idx !== items.length - 1) {
+        doc.addPage();
+        y = CONTENT_TOP;
+        drawTableHead(y);
+        y += headRowH;
+      }
     });
 
     // Closing rule under the table
