@@ -151,13 +151,18 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       .text('BILL TO', billX, y, { width: colW, characterSpacing: 1, lineBreak: false });
     doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(12)
       .text(inline(invoice.billToName), billX, y + 14, { width: colW, lineBreak: false, ellipsis: true });
+    // Allow address up to 2 lines so long addresses (POB:..., DOHA, QATAR)
+    // don't wrap into the row that holds city/country.
     doc.fillColor(TEXT).font('Helvetica').fontSize(9.5)
-      .text(inline(invoice.billToAddress), billX, y + 32, { width: colW, lineBreak: false, ellipsis: true });
+      .text(inline(invoice.billToAddress), billX, y + 32, {
+        width: colW, height: 24, ellipsis: true,
+      });
     const cityCountry = [inline(invoice.billToCity), inline(invoice.billToCountry)].filter(Boolean).join(', ');
     if (cityCountry) {
-      doc.text(cityCountry, billX, y + 46, { width: colW, lineBreak: false, ellipsis: true });
+      doc.fillColor(TEXT).font('Helvetica').fontSize(9.5)
+        .text(cityCountry, billX, y + 58, { width: colW, lineBreak: false, ellipsis: true });
     }
-    let billLine = 60;
+    let billLine = 74;
     if (invoice.billToEmail) {
       doc.fillColor(MUTED).font('Helvetica').fontSize(9)
         .text(inline(invoice.billToEmail), billX, y + billLine, { width: colW, lineBreak: false, ellipsis: true });
@@ -201,7 +206,7 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     });
 
     // Both columns must end at the same baseline
-    const blockBottom = Math.max(y + 80, jy + 4);
+    const blockBottom = Math.max(y + 100, jy + 4);
     y = blockBottom;
     doc.lineWidth(0.6).strokeColor(DIVIDER).moveTo(left, y).lineTo(right, y).stroke();
     y += 14;
@@ -321,20 +326,9 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       }
     });
 
-    // If the planner decided the footer needs its own page (e.g. all items
-    // packed page 1 but no room left for totals/bank), break here.
-    if (footerOnNewPage) {
-      doc.addPage();
-      y = CONTENT_TOP;
-    } else {
-      // Closing rule under the table on the same page
-      doc.lineWidth(0.6).strokeColor(DIVIDER)
-        .moveTo(left, y).lineTo(right, y).stroke();
-      y += 14;
-    }
-
-    // Helper: open a fresh page if `needed` pts won't fit. Used before each
-    // footer section so a stray text() never lands in the brand footer band.
+    // Helper: open a fresh page if `needed` pts won't fit on the current
+    // page. Used before bank/signature/disclaimer so a stray text() never
+    // lands in the brand footer band.
     const ensureSpace = (needed: number) => {
       if (y + needed > contentBottom(doc)) {
         doc.addPage();
@@ -342,14 +336,19 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       }
     };
 
+    // The totals card and amount-in-words always render directly under the
+    // items table on the SAME page (page 1 for typical invoices). The bank /
+    // signature / disclaimer block flows after and may move to a new page.
+    void footerOnNewPage; // kept for backward compatibility; no longer triggers a page break
+
+    // Closing rule under the table
+    doc.lineWidth(0.6).strokeColor(DIVIDER)
+      .moveTo(left, y).lineTo(right, y).stroke();
+    y += 14;
+
     // ===================================================================
-    //  TOTALS  (right-aligned card)
+    //  TOTALS  (right-aligned card) — renders inline after items
     // ===================================================================
-    // Totals + amount-in-words combined: ~80–110pt depending on optional rows
-    const totalsRowsCount = 1
-      + (invoice.taxAmount > 0 ? 1 : 0)
-      + (invoice.shippingCost > 0 ? 1 : 0);
-    ensureSpace(totalsRowsCount * 16 + 4 + 22 + (invoice.amountInWords ? 24 : 0));
     const totalsW = fullW * 0.42;
     const totalsX = right - totalsW;
 
