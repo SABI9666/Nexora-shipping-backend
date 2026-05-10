@@ -67,14 +67,19 @@ export type InvoiceForPdf = {
   orderRef?: { orderNumber: string } | null;
 };
 
-// Palette — modern, restrained
+// Palette — Nexora brand: navy + red, with soft tint backgrounds.
 const NAVY = '#0a1628';
+const NAVY_SOFT = '#1e293b';   // slightly lighter navy for body labels
+const BRAND_RED = '#dc2626';   // accent dot / divider start
 const TEXT = '#0f172a';
-const MUTED = '#64748b';
+const MUTED = '#475569';
 const SUBTLE = '#94a3b8';
 const DIVIDER = '#e2e8f0';
-const ACCENT_BG = '#f8fafc';
+const NAVY_TINT = '#eef2f7';   // very light navy panel background (TOTAL DUE, headers)
+const NAVY_TINT_2 = '#f4f7fb'; // even softer navy tint (table head, words box)
 const ROW_ALT = '#fafbfc';
+const ACCENT_BG = '#f8fafc';
+void ACCENT_BG;
 
 const fmtNum = (n: number) =>
   n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -133,9 +138,10 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       });
 
     y += 56;
-    // Top accent rule
-    doc.lineWidth(2).strokeColor(NAVY).moveTo(left, y).lineTo(left + 60, y).stroke();
-    doc.lineWidth(0.6).strokeColor(DIVIDER).moveTo(left + 64, y).lineTo(right, y).stroke();
+    // Top accent rule: red dot · navy bar · light divider
+    doc.fillColor(BRAND_RED).circle(left + 3, y, 2.6).fill();
+    doc.lineWidth(2.5).strokeColor(NAVY).moveTo(left + 10, y).lineTo(left + 86, y).stroke();
+    doc.lineWidth(0.6).strokeColor(DIVIDER).moveTo(left + 92, y).lineTo(right, y).stroke();
     y += 18;
 
     // ===================================================================
@@ -147,8 +153,9 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     const jobX = left + colW + colGap;
 
     // BILL TO
-    doc.fillColor(SUBTLE).font('Helvetica-Bold').fontSize(8)
-      .text('BILL TO', billX, y, { width: colW, characterSpacing: 1, lineBreak: false });
+    doc.fillColor(BRAND_RED).rect(billX, y + 1, 2, 9).fill();
+    doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(8.5)
+      .text('BILL TO', billX + 6, y, { width: colW - 6, characterSpacing: 1.2, lineBreak: false });
     doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(12)
       .text(inline(invoice.billToName), billX, y + 14, { width: colW, lineBreak: false, ellipsis: true });
     // Allow address up to 2 lines so long addresses (POB:..., DOHA, QATAR)
@@ -190,15 +197,16 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       nonEmpty('Consignee', invoice.consigneeName),
     ].filter((r): r is KV => !!r);
 
-    doc.fillColor(SUBTLE).font('Helvetica-Bold').fontSize(8)
-      .text('JOB DETAILS', jobX, y, { width: colW, characterSpacing: 1, lineBreak: false });
+    doc.fillColor(BRAND_RED).rect(jobX, y + 1, 2, 9).fill();
+    doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(8.5)
+      .text('JOB DETAILS', jobX + 6, y, { width: colW - 6, characterSpacing: 1.2, lineBreak: false });
     const jobLabelW = 76;
     let jy = y + 16;
     const jobLineH = 13;
     jobRows.slice(0, 8).forEach((r) => {
-      doc.fillColor(MUTED).font('Helvetica').fontSize(9)
+      doc.fillColor(NAVY_SOFT).font('Helvetica-Bold').fontSize(8.5)
         .text(r.label, jobX, jy, { width: jobLabelW, lineBreak: false });
-      doc.fillColor(TEXT).font('Helvetica-Bold').fontSize(9)
+      doc.fillColor(TEXT).font('Helvetica').fontSize(9)
         .text(r.value, jobX + jobLabelW, jy, {
           width: colW - jobLabelW, lineBreak: false, ellipsis: true,
         });
@@ -235,13 +243,16 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       96 + 14 + 84 + 38 + 20;
 
     const drawTableHead = (yy: number) => {
-      doc.fillColor(SUBTLE).font('Helvetica-Bold').fontSize(8);
+      // Soft navy tinted background panel for the head row
+      doc.fillColor(NAVY_TINT_2).rect(left, yy, fullW, headRowH).fill();
+      doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(8);
       cols.forEach((c, i) => {
-        doc.text(c.label, colX[i] + (c.align === 'left' ? 0 : 0), yy + 7, {
-          width: c.w, align: c.align, characterSpacing: 0.6, lineBreak: false,
+        doc.text(c.label, colX[i] + 4, yy + 7, {
+          width: c.w - 8, align: c.align, characterSpacing: 0.8, lineBreak: false,
         });
       });
-      doc.lineWidth(0.7).strokeColor(NAVY)
+      // Bold navy underline beneath the head
+      doc.lineWidth(1).strokeColor(NAVY)
         .moveTo(left, yy + headRowH).lineTo(right, yy + headRowH).stroke();
     };
 
@@ -374,20 +385,30 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     if (invoice.shippingCost > 0) {
       drawTotalsRow('Shipping', `${invoice.currency} ${fmtNum(invoice.shippingCost)}`);
     }
-    // Emphasized Total — top divider + bigger font
-    doc.lineWidth(1).strokeColor(NAVY)
-      .moveTo(totalsX, y - 2).lineTo(right, y - 2).stroke();
-    y += 4;
+    // Emphasized Total — navy tinted background panel + bigger font
+    y += 2;
+    doc.fillColor(NAVY_TINT).rect(totalsX - 6, y, totalsW + 6, 26).fill();
+    doc.lineWidth(0.7).strokeColor(NAVY).moveTo(totalsX - 6, y).lineTo(right, y).stroke();
+    doc.lineWidth(0.7).strokeColor(NAVY).moveTo(totalsX - 6, y + 26).lineTo(right, y + 26).stroke();
+    y += 6;
     drawTotalsRow('TOTAL DUE', `${invoice.currency} ${fmtNum(invoice.total)}`, { strong: true });
+    y += 6;
 
-    // Amount in words
+    // Amount in words — italic muted, with a soft tint panel and a navy
+    // left bar so it reads as a single distinct callout.
     if (invoice.amountInWords) {
-      doc.fillColor(MUTED).font('Helvetica-Oblique').fontSize(9)
-        .text(invoice.amountInWords, left, y, {
-          width: fullW * 0.55, lineBreak: false, ellipsis: true,
+      const wordsW = fullW * 0.58;
+      const wordsH = 22;
+      doc.fillColor(NAVY_TINT_2).rect(left, y - 4, wordsW, wordsH).fill();
+      doc.fillColor(NAVY).rect(left, y - 4, 2.5, wordsH).fill();
+      doc.fillColor(NAVY_SOFT).font('Helvetica-Oblique').fontSize(9)
+        .text(invoice.amountInWords, left + 8, y + 1, {
+          width: wordsW - 12, lineBreak: false, ellipsis: true,
         });
+      y += wordsH;
+    } else {
+      y += 18;
     }
-    y += 18;
     doc.lineWidth(0.6).strokeColor(DIVIDER).moveTo(left, y).lineTo(right, y).stroke();
     y += 14;
 
@@ -415,10 +436,12 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       const bankSectionHeight = 14 + Math.max(showPayment ? 14 : 0, bankRows.length * 12) + 18;
       ensureSpace(bankSectionHeight + 56 /* + signature */);
 
-      doc.fillColor(SUBTLE).font('Helvetica-Bold').fontSize(8)
-        .text('PAYMENT TERMS', billX, y, { width: leftColW, characterSpacing: 1, lineBreak: false });
-      doc.fillColor(SUBTLE).font('Helvetica-Bold').fontSize(8)
-        .text('BANK DETAILS', jobX, y, { width: rightColW, characterSpacing: 1, lineBreak: false });
+      doc.fillColor(BRAND_RED).rect(billX, y + 1, 2, 9).fill();
+      doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(8.5)
+        .text('PAYMENT TERMS', billX + 6, y, { width: leftColW - 6, characterSpacing: 1.2, lineBreak: false });
+      doc.fillColor(BRAND_RED).rect(jobX, y + 1, 2, 9).fill();
+      doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(8.5)
+        .text('BANK DETAILS', jobX + 6, y, { width: rightColW - 6, characterSpacing: 1.2, lineBreak: false });
 
       let py = y + 14;
 
@@ -435,7 +458,7 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       let by = y + 14;
       const bankLabelW = 60;
       bankRows.forEach((r) => {
-        doc.fillColor(MUTED).font('Helvetica').fontSize(8.5)
+        doc.fillColor(NAVY_SOFT).font('Helvetica-Bold').fontSize(8.5)
           .text(r.label, jobX, by, { width: bankLabelW, lineBreak: false });
         doc.fillColor(TEXT).font('Helvetica').fontSize(8.5)
           .text(r.value, jobX + bankLabelW, by, {
@@ -453,16 +476,17 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     ensureSpace(56);
     doc.lineWidth(0.6).strokeColor(DIVIDER).moveTo(left, y).lineTo(right, y).stroke();
     y += 12;
-    doc.fillColor(SUBTLE).font('Helvetica-Bold').fontSize(8)
-      .text(`FOR ${invoice.shipFromName.toUpperCase()}`, left, y, {
-        width: fullW, characterSpacing: 1, lineBreak: false, ellipsis: true,
+    doc.fillColor(BRAND_RED).rect(left, y + 1, 2, 9).fill();
+    doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(9)
+      .text(`FOR ${invoice.shipFromName.toUpperCase()}`, left + 6, y, {
+        width: fullW - 6, characterSpacing: 1.2, lineBreak: false, ellipsis: true,
       });
     y += 14;
     const sigW = (fullW - colGap) / 2;
-    doc.lineWidth(0.5).strokeColor(SUBTLE)
+    doc.lineWidth(0.5).strokeColor(NAVY_SOFT)
       .moveTo(left, y + 14).lineTo(left + sigW, y + 14).stroke();
     doc.moveTo(left + sigW + colGap, y + 14).lineTo(right, y + 14).stroke();
-    doc.fillColor(MUTED).font('Helvetica').fontSize(8.5)
+    doc.fillColor(NAVY_SOFT).font('Helvetica-Bold').fontSize(8.5)
       .text('Prepared By', left, y + 16, { width: sigW, lineBreak: false })
       .text('Approved By', left + sigW + colGap, y + 16, { width: sigW, lineBreak: false });
 
@@ -470,15 +494,17 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     //  DISCLAIMER  ·  fine-print at the very bottom
     // ===================================================================
     y += 36;
-    ensureSpace(28);
-    doc.fillColor(MUTED).font('Helvetica').fontSize(8.5)
+    ensureSpace(32);
+    // Soft tint band for the disclaimer so it visually closes off the page
+    doc.fillColor(NAVY_TINT_2).rect(left, y - 3, fullW, 26).fill();
+    doc.fillColor(NAVY_SOFT).font('Helvetica').fontSize(8.5)
       .text(
         'In case of any discrepancy in the invoice, kindly inform immediately or within seven days.',
         left, y,
         { width: fullW, align: 'center', lineBreak: false, ellipsis: true },
       );
     y += 12;
-    doc.fillColor(SUBTLE).font('Helvetica-Oblique').fontSize(8)
+    doc.fillColor(MUTED).font('Helvetica-Oblique').fontSize(8)
       .text(
         'This is a computer-generated document and does not require a signature.',
         left, y,
