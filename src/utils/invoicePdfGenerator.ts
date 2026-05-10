@@ -83,8 +83,15 @@ const fmtDate = (d: Date | null | undefined) =>
 
 interface KV { label: string; value: string }
 function nonEmpty(label: string, value: string | null | undefined): KV | null {
-  const v = (value ?? '').toString().trim();
+  const v = inline(value);
   return v ? { label, value: v } : null;
+}
+
+// Collapse user-supplied multi-line strings (addresses, names) into a single
+// line so pdfkit's text() never wraps them across rows even when lineBreak:
+// false is set — embedded \n still cause line breaks.
+function inline(s: string | null | undefined): string {
+  return (s ?? '').toString().replace(/\s*[\r\n]+\s*/g, ', ').trim();
 }
 
 export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer> {
@@ -143,22 +150,22 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     doc.fillColor(SUBTLE).font('Helvetica-Bold').fontSize(8)
       .text('BILL TO', billX, y, { width: colW, characterSpacing: 1, lineBreak: false });
     doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(12)
-      .text(invoice.billToName, billX, y + 14, { width: colW, lineBreak: false, ellipsis: true });
+      .text(inline(invoice.billToName), billX, y + 14, { width: colW, lineBreak: false, ellipsis: true });
     doc.fillColor(TEXT).font('Helvetica').fontSize(9.5)
-      .text(invoice.billToAddress, billX, y + 32, { width: colW, lineBreak: false, ellipsis: true });
-    const cityCountry = [invoice.billToCity, invoice.billToCountry].filter(Boolean).join(', ');
+      .text(inline(invoice.billToAddress), billX, y + 32, { width: colW, lineBreak: false, ellipsis: true });
+    const cityCountry = [inline(invoice.billToCity), inline(invoice.billToCountry)].filter(Boolean).join(', ');
     if (cityCountry) {
       doc.text(cityCountry, billX, y + 46, { width: colW, lineBreak: false, ellipsis: true });
     }
     let billLine = 60;
     if (invoice.billToEmail) {
       doc.fillColor(MUTED).font('Helvetica').fontSize(9)
-        .text(invoice.billToEmail, billX, y + billLine, { width: colW, lineBreak: false, ellipsis: true });
+        .text(inline(invoice.billToEmail), billX, y + billLine, { width: colW, lineBreak: false, ellipsis: true });
       billLine += 12;
     }
     if (invoice.billToPhone) {
       doc.fillColor(MUTED).font('Helvetica').fontSize(9)
-        .text(invoice.billToPhone, billX, y + billLine, { width: colW, lineBreak: false, ellipsis: true });
+        .text(inline(invoice.billToPhone), billX, y + billLine, { width: colW, lineBreak: false, ellipsis: true });
     }
 
     // JOB DETAILS — assemble only fields that have a value (no blank rows)
@@ -248,39 +255,28 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     const firstPageCapWithFooter = Math.max(1, Math.floor((contentBottom(doc) - y - FOOTER_BLOCK_H) / rowH));
 
     const breakAfter = new Set<number>(); // 0-based item indices after which to add a page
+    let footerOnNewPage = false;          // page-break ONCE more after items finish
 
     if (items.length > firstPageCapWithFooter) {
-      // Multi-page invoice: figure out where to break.
-      const MIN_LAST_PAGE_ITEMS = 3; // avoid an "almost-empty footer page"
-
-      if (items.length <= firstPageCapFull + lastPageCapWithFooter) {
-        // ── Two-page case ──
-        // Pack page 1 to its full capacity; whatever spills goes to the last
-        // page along with the footer. If the last page would have fewer than
-        // MIN_LAST_PAGE_ITEMS items, borrow from page 1 so the second sheet
-        // doesn't look empty.
-        let lastCount = items.length - firstPageCapFull;
-        if (lastCount < MIN_LAST_PAGE_ITEMS) lastCount = MIN_LAST_PAGE_ITEMS;
-        if (lastCount > lastPageCapWithFooter) lastCount = lastPageCapWithFooter;
-        const firstCount = items.length - lastCount;
-        breakAfter.add(firstCount - 1);
+      // Multi-page invoice. The user's #1 ask is "fill page 1" — so we pack
+      // page 1 to its full capacity (no footer reserve) and accept the
+      // footer landing on a fresh sheet if it doesn't fit below the items.
+      if (items.length <= firstPageCapFull) {
+        // All items fit on page 1; just push the footer to a new page.
+        footerOnNewPage = true;
       } else {
-        // ── Three+ page case ──
-        // Page 1 fills, continuation pages fill, last page reserves footer.
+        // Items overflow page 1 → continuation pages are needed.
         let cursor = firstPageCapFull;
         breakAfter.add(cursor - 1);
         let remaining = items.length - cursor;
         while (remaining > lastPageCapWithFooter) {
-          cursor += pageCapFull;
+          const take = Math.min(remaining, pageCapFull);
+          cursor += take;
           breakAfter.add(cursor - 1);
-          remaining -= pageCapFull;
+          remaining -= take;
         }
-        // If the leftover for the last page is too small, shift the last
-        // break earlier so 3 items move down.
-        if (remaining > 0 && remaining < MIN_LAST_PAGE_ITEMS) {
-          const lastBreakIdx = Math.max(...breakAfter);
-          breakAfter.delete(lastBreakIdx);
-          breakAfter.add(lastBreakIdx - (MIN_LAST_PAGE_ITEMS - remaining));
+        if (remaining === 0) {
+          footerOnNewPage = true;
         }
       }
     }
@@ -325,10 +321,17 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       }
     });
 
-    // Closing rule under the table
-    doc.lineWidth(0.6).strokeColor(DIVIDER)
-      .moveTo(left, y).lineTo(right, y).stroke();
-    y += 14;
+    // If the planner decided the footer needs its own page (e.g. all items
+    // packed page 1 but no room left for totals/bank), break here.
+    if (footerOnNewPage) {
+      doc.addPage();
+      y = CONTENT_TOP;
+    } else {
+      // Closing rule under the table on the same page
+      doc.lineWidth(0.6).strokeColor(DIVIDER)
+        .moveTo(left, y).lineTo(right, y).stroke();
+      y += 14;
+    }
 
     // Helper: open a fresh page if `needed` pts won't fit. Used before each
     // footer section so a stray text() never lands in the brand footer band.
@@ -463,6 +466,25 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     doc.fillColor(MUTED).font('Helvetica').fontSize(8.5)
       .text('Prepared By', left, y + 16, { width: sigW, lineBreak: false })
       .text('Approved By', left + sigW + colGap, y + 16, { width: sigW, lineBreak: false });
+
+    // ===================================================================
+    //  DISCLAIMER  ·  fine-print at the very bottom
+    // ===================================================================
+    y += 36;
+    ensureSpace(28);
+    doc.fillColor(MUTED).font('Helvetica').fontSize(8.5)
+      .text(
+        'In case of any discrepancy in the invoice, kindly inform immediately or within seven days.',
+        left, y,
+        { width: fullW, align: 'center', lineBreak: false, ellipsis: true },
+      );
+    y += 12;
+    doc.fillColor(SUBTLE).font('Helvetica-Oblique').fontSize(8)
+      .text(
+        'This is a computer-generated document and does not require a signature.',
+        left, y,
+        { width: fullW, align: 'center', lineBreak: false, ellipsis: true },
+      );
 
     doc.end();
   });
