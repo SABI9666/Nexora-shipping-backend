@@ -346,11 +346,49 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
         y = CONTENT_TOP;
       }
     };
+    void ensureSpace; // kept for emergency use; footer block reserves space up-front now
 
-    // The totals card and amount-in-words always render directly under the
-    // items table on the SAME page (page 1 for typical invoices). The bank /
-    // signature / disclaimer block flows after and may move to a new page.
     void footerOnNewPage; // kept for backward compatibility; no longer triggers a page break
+
+    // === Compute the entire footer block height up front ================
+    // pdfkit auto-paginates the moment our cursor crosses contentBottom, so
+    // if we let multiple footer text() calls happen one-by-one near the end
+    // of the page each of them spawns its own near-empty page (the symptom
+    // the user reported: amount-in-words alone on page 2, bank alone on
+    // page 3). Pre-computing the total height lets us decide ONCE whether
+    // the footer fits below the items or has to start on a fresh sheet,
+    // and then we render every section in sequence with no further breaks.
+    const _bankRowsForHeight: KV[] = [
+      nonEmpty('Bank', invoice.bankName),
+      nonEmpty('Address', invoice.bankAddress),
+      nonEmpty('Account', invoice.accountName),
+      nonEmpty('A/C No.', invoice.accountNumber),
+      nonEmpty('IBAN', invoice.iban),
+      nonEmpty('SWIFT', invoice.swiftCode),
+    ].filter((r): r is KV => !!r);
+    const _showPayment = !!invoice.paymentTerms;
+    const _showBank = _bankRowsForHeight.length > 0;
+    const _bankBlockH = (_showPayment || _showBank)
+      ? (14 /* labels */ + Math.max(_showPayment ? 14 : 0, _bankRowsForHeight.length * 12) + 12 /* slack */)
+      : 0;
+    const _totalsRowsH = 16
+      + (invoice.taxAmount > 0 ? 16 : 0)
+      + (invoice.shippingCost > 0 ? 16 : 0);
+    const _amountWordsH = invoice.amountInWords ? 22 : 18;
+    const FOOTER_TOTAL_H =
+      14   /* closing rule */ +
+      _totalsRowsH + 2 + 26 + 6 + 22 + 6 /* TOTAL DUE panel */ +
+      _amountWordsH +
+      14   /* divider */ +
+      _bankBlockH +
+      12 + 14 + 16 /* signature: divider + label + sig area */ +
+      36 + 28 /* disclaimer: gap + two lines */;
+
+    // If the entire footer doesn't fit below the items, start a fresh page.
+    if (y + FOOTER_TOTAL_H > contentBottom(doc)) {
+      doc.addPage();
+      y = CONTENT_TOP;
+    }
 
     // Closing rule under the table
     doc.lineWidth(0.6).strokeColor(DIVIDER)
@@ -432,9 +470,7 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       const leftColW = colW;
       const rightColW = colW;
 
-      // Bank can be 6 rows × 12pt + 14pt header + 18pt slack
-      const bankSectionHeight = 14 + Math.max(showPayment ? 14 : 0, bankRows.length * 12) + 18;
-      ensureSpace(bankSectionHeight + 56 /* + signature */);
+      // (Footer height was reserved up-front, so no ensureSpace here.)
 
       doc.fillColor(BRAND_RED).rect(billX, y + 1, 2, 9).fill();
       doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(8.5)
@@ -473,7 +509,7 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     // ===================================================================
     //  SIGNATURE  ·  Prepared / Approved
     // ===================================================================
-    ensureSpace(56);
+    // (Footer height was reserved up-front, so no ensureSpace here.)
     doc.lineWidth(0.6).strokeColor(DIVIDER).moveTo(left, y).lineTo(right, y).stroke();
     y += 12;
     doc.fillColor(BRAND_RED).rect(left, y + 1, 2, 9).fill();
@@ -494,7 +530,7 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     //  DISCLAIMER  ·  fine-print at the very bottom
     // ===================================================================
     y += 36;
-    ensureSpace(32);
+    // (Footer height was reserved up-front, so no ensureSpace here.)
     // Soft tint band for the disclaimer so it visually closes off the page
     doc.fillColor(NAVY_TINT_2).rect(left, y - 3, fullW, 26).fill();
     doc.fillColor(NAVY_SOFT).font('Helvetica').fontSize(8.5)
