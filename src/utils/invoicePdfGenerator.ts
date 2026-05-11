@@ -180,19 +180,22 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
         .text(inline(invoice.billToPhone), billX, y + billLine, { width: colW, lineBreak: false, ellipsis: true });
     }
 
-    // JOB DETAILS — assemble only fields that have a value (no blank rows)
+    // JOB DETAILS — assemble only fields that have a value (no blank rows).
+    // Order prioritises the shipment-context fields users care most about
+    // (Origin / Destination / Volume / Gross Weight / Commodity) so they
+    // stay visible even when the section runs long.
     const jobRows: KV[] = [
       nonEmpty('Job No', invoice.jobNo ?? invoice.orderRef?.orderNumber ?? ''),
       nonEmpty('Customer Ref', invoice.customerRef ?? ''),
       nonEmpty('Origin', invoice.originPort),
       nonEmpty('Destination', invoice.destPort),
+      nonEmpty('Volume', invoice.volume),
+      nonEmpty('Gross Weight', invoice.grossWeight),
+      nonEmpty('Packages', invoice.packages),
+      nonEmpty('Commodity', invoice.commodity),
       nonEmpty('MB/L', invoice.masterBl),
       nonEmpty('HB/L', invoice.houseBl),
       nonEmpty('BOE No.', invoice.boeNumber),
-      nonEmpty('Commodity', invoice.commodity),
-      nonEmpty('Gross Weight', invoice.grossWeight),
-      nonEmpty('Volume', invoice.volume),
-      nonEmpty('Packages', invoice.packages),
       nonEmpty('Shipper', invoice.shipperName),
       nonEmpty('Consignee', invoice.consigneeName),
     ].filter((r): r is KV => !!r);
@@ -203,7 +206,7 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     const jobLabelW = 76;
     let jy = y + 16;
     const jobLineH = 13;
-    jobRows.slice(0, 8).forEach((r) => {
+    jobRows.slice(0, 10).forEach((r) => {
       doc.fillColor(NAVY_SOFT).font('Helvetica-Bold').fontSize(8.5)
         .text(r.label, jobX, jy, { width: jobLabelW, lineBreak: false });
       doc.fillColor(TEXT).font('Helvetica').fontSize(9)
@@ -213,7 +216,8 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       jy += jobLineH;
     });
 
-    // Both columns must end at the same baseline
+    // Both columns must end at the same baseline. Block grows to fit the
+    // taller column (BILL TO ≈ 100pt vs JOB DETAILS up to 10 × 13 + 16).
     const blockBottom = Math.max(y + 100, jy + 4);
     y = blockBottom;
     doc.lineWidth(0.6).strokeColor(DIVIDER).moveTo(left, y).lineTo(right, y).stroke();
