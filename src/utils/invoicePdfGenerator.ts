@@ -220,14 +220,15 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     y += 14;
 
     // ===================================================================
-    //  ITEMS TABLE  (Description / Qty / Rate / VAT% / Amount)
+    //  ITEMS TABLE  (Description / Qty / Rate / VAT% / Amount / Remarks)
     // ===================================================================
     const cols = [
-      { key: 'desc', label: 'DESCRIPTION', w: fullW * 0.50, align: 'left' as const },
-      { key: 'qty', label: 'QTY', w: fullW * 0.08, align: 'right' as const },
-      { key: 'rate', label: 'RATE', w: fullW * 0.13, align: 'right' as const },
-      { key: 'vat', label: 'VAT %', w: fullW * 0.09, align: 'right' as const },
-      { key: 'amt', label: 'AMOUNT', w: fullW * 0.20, align: 'right' as const },
+      { key: 'desc',    label: 'DESCRIPTION', w: fullW * 0.38, align: 'left' as const },
+      { key: 'qty',     label: 'QTY',         w: fullW * 0.07, align: 'right' as const },
+      { key: 'rate',    label: 'RATE',        w: fullW * 0.11, align: 'right' as const },
+      { key: 'vat',     label: 'VAT %',       w: fullW * 0.07, align: 'right' as const },
+      { key: 'amt',     label: 'AMOUNT',      w: fullW * 0.16, align: 'right' as const },
+      { key: 'remarks', label: 'REMARKS',     w: fullW * 0.21, align: 'left' as const },
     ];
     const colX: number[] = [];
     {
@@ -310,19 +311,25 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
         doc.rect(left, y, fullW, rowH).fillColor(ROW_ALT).fill();
       }
       const vatPct = it.vatPercent ?? 0;
+      const remarks = inline(it.remarks);
       const cells = [
-        it.description,
-        String(it.quantity),
-        fmtNum(it.unitPrice),
-        vatPct ? fmtNum(vatPct) : '—',
-        fmtNum(it.amount),
+        { v: it.description,                 font: 'Helvetica',      color: TEXT },
+        { v: String(it.quantity),            font: 'Helvetica',      color: TEXT },
+        { v: fmtNum(it.unitPrice),           font: 'Helvetica',      color: TEXT },
+        { v: vatPct ? fmtNum(vatPct) : '—',  font: 'Helvetica',      color: vatPct ? TEXT : SUBTLE },
+        { v: fmtNum(it.amount),              font: 'Helvetica-Bold', color: NAVY },
+        // Remarks render italic & muted so the line still reads "amount-led"
+        // but the side note is clearly visible on the right.
+        { v: remarks,                        font: 'Helvetica-Oblique', color: MUTED },
       ];
-      doc.fillColor(TEXT).font('Helvetica').fontSize(10);
-      cells.forEach((v, i) => {
-        const isAmount = i === cells.length - 1;
-        doc.font(isAmount ? 'Helvetica-Bold' : 'Helvetica').fillColor(isAmount ? NAVY : TEXT);
-        doc.text(v, colX[i], y + 6, {
-          width: cols[i].w, align: cols[i].align, lineBreak: false, ellipsis: true,
+      doc.fontSize(10);
+      cells.forEach((cell, i) => {
+        doc.font(cell.font).fillColor(cell.color);
+        doc.text(cell.v, colX[i] + (cols[i].align === 'left' ? 4 : 0), y + 6, {
+          width: cols[i].w - (cols[i].align === 'left' ? 8 : 4),
+          align: cols[i].align,
+          lineBreak: false,
+          ellipsis: true,
         });
       });
       y += rowH;
