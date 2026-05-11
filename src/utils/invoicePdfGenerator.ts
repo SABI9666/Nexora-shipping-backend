@@ -120,8 +120,11 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     // ===================================================================
     doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(28)
       .text('INVOICE', left, y, { width: fullW * 0.6, lineBreak: false });
-    doc.fillColor(MUTED).font('Helvetica').fontSize(9)
-      .text(`TRN ${invoice.companyTrn || '105413106300003'}`, left, y + 32, {
+    // TRN — sits prominently under the title, brand navy & bold so it can't
+    // be confused with body text.
+    const trnValue = invoice.companyTrn || '105413106300003';
+    doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(10.5)
+      .text(`TRN: ${trnValue}`, left, y + 34, {
         width: fullW * 0.6, lineBreak: false,
       });
 
