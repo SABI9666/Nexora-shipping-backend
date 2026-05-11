@@ -542,7 +542,7 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     doc.fillColor(NAVY_TINT_2).rect(left, y - 3, fullW, 26).fill();
     doc.fillColor(NAVY_SOFT).font('Helvetica').fontSize(8.5)
       .text(
-        'In case of any discrepancy in the invoice, kindly inform immediately or within seven days.',
+        'In case of any discrepancy in the invoice, kindly inform immediately or within 24hrs.',
         left, y,
         { width: fullW, align: 'center', lineBreak: false, ellipsis: true },
       );
