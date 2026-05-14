@@ -19,8 +19,14 @@ import accountGroupRoutes from './routes/accountGroups';
 import customerGroupRoutes from './routes/customerGroups';
 import accountRoutes from './routes/accounts';
 import itemMasterRoutes from './routes/itemMaster';
+import salespersonRoutes from './routes/salespersons';
+import chargeItemRoutes from './routes/chargeItems';
+import bankAccountRoutes from './routes/bankAccounts';
 import voucherRoutes from './routes/vouchers';
 import { errorHandler } from './middleware/errorHandler';
+import { ensureStandardAccountGroups } from './utils/bootstrapAccountGroups';
+import { ensureStandardChargeItems } from './utils/bootstrapChargeItems';
+import { ensureSeedBankAccounts } from './utils/bootstrapBankAccounts';
 
 const app = express();
 
@@ -106,6 +112,9 @@ app.use('/api/account-groups', accountGroupRoutes);
 app.use('/api/customer-groups', customerGroupRoutes);
 app.use('/api/accounts', accountRoutes);
 app.use('/api/items', itemMasterRoutes);
+app.use('/api/salespersons', salespersonRoutes);
+app.use('/api/charge-items', chargeItemRoutes);
+app.use('/api/bank-accounts', bankAccountRoutes);
 app.use('/api/vouchers', voucherRoutes);
 
 app.use('*', (_req, res) => {
@@ -119,6 +128,9 @@ const PORT = parseInt(process.env.PORT || '8080', 10);
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Nexora Shipping API running on port ${PORT}`);
   console.log(`📦 Environment: ${process.env.NODE_ENV || 'development'}`);
+  ensureStandardAccountGroups();
+  ensureStandardChargeItems();
+  ensureSeedBankAccounts();
 });
 
 export default app;
