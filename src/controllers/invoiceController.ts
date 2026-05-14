@@ -44,6 +44,7 @@ const SHIPMENT_FIELDS = {
 
 const createInvoiceSchema = z.object({
   orderId: z.string().uuid().optional(),
+  accountId: z.string().uuid().optional().or(z.literal('')),
   billToName: z.string().min(2),
   billToAddress: z.string().min(5),
   billToCity: z.string().min(2),
@@ -68,6 +69,7 @@ const createInvoiceSchema = z.object({
 
 const updateInvoiceSchema = z.object({
   status: z.nativeEnum(InvoiceStatus).optional(),
+  accountId: z.string().uuid().optional().or(z.literal('')),
   billToName: z.string().min(2).optional(),
   billToAddress: z.string().min(5).optional(),
   billToCity: z.string().min(2).optional(),
@@ -126,6 +128,13 @@ function calcTotals(enriched: EnrichedItem[], shippingCost: number) {
   return { subtotal, taxAmount, total };
 }
 
+const INVOICE_INCLUDE = {
+  items: true,
+  orderRef: { select: { id: true, orderNumber: true, status: true } },
+  account: { select: { id: true, code: true, name: true, accountGroup: { select: { name: true, groupType: true } } } },
+  user: { select: { id: true, firstName: true, lastName: true, email: true } },
+} as const;
+
 export const createInvoice = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const data = createInvoiceSchema.parse(req.body);
@@ -139,6 +148,12 @@ export const createInvoice = async (req: AuthRequest, res: Response, next: NextF
       });
       if (!order) throw new AppError('Order not found or access denied', 404);
       linkedOrderNumber = order.orderNumber;
+    }
+
+    const accountId = data.accountId || null;
+    if (accountId) {
+      const acc = await prisma.account.findUnique({ where: { id: accountId } });
+      if (!acc) throw new AppError('Customer account not found', 404);
     }
 
     const enriched = enrichItems(data.items);
@@ -197,6 +212,7 @@ export const createInvoice = async (req: AuthRequest, res: Response, next: NextF
             paymentTerms: data.paymentTerms || null,
             notes: data.notes || null,
             orderId: data.orderId || null,
+            accountId,
             userId: req.user!.id,
             items: {
               create: enriched.map((it) => ({
@@ -213,7 +229,7 @@ export const createInvoice = async (req: AuthRequest, res: Response, next: NextF
               })),
             },
           },
-          include: { items: true, orderRef: { select: { orderNumber: true } } },
+          include: INVOICE_INCLUDE,
         });
         break;
       } catch (e: unknown) {
@@ -239,11 +255,13 @@ export const getInvoices = async (req: AuthRequest, res: Response, next: NextFun
     const limit = parseInt(req.query.limit as string) || 10;
     const status = req.query.status as InvoiceStatus | undefined;
     const search = req.query.search as string | undefined;
+    const accountId = req.query.accountId as string | undefined;
     const isAdmin = req.user!.role === Role.ADMIN;
 
     const where = {
       ...(isAdmin ? {} : { userId: req.user!.id }),
       ...(status ? { status } : {}),
+      ...(accountId ? { accountId } : {}),
       ...(search ? {
         OR: [
           { invoiceNumber: { contains: search, mode: 'insensitive' as const } },
@@ -258,11 +276,7 @@ export const getInvoices = async (req: AuthRequest, res: Response, next: NextFun
         where,
         ...paginate(page, limit),
         orderBy: { createdAt: 'desc' },
-        include: {
-          items: true,
-          orderRef: { select: { id: true, orderNumber: true } },
-          user: { select: { id: true, firstName: true, lastName: true, email: true } },
-        },
+        include: INVOICE_INCLUDE,
       }),
       prisma.invoice.count({ where }),
     ]);
@@ -284,11 +298,7 @@ export const getInvoice = async (req: AuthRequest, res: Response, next: NextFunc
 
     const invoice = await prisma.invoice.findFirst({
       where: { id, ...(isAdmin ? {} : { userId: req.user!.id }) },
-      include: {
-        items: true,
-        orderRef: { select: { id: true, orderNumber: true, status: true } },
-        user: { select: { id: true, firstName: true, lastName: true, email: true } },
-      },
+      include: INVOICE_INCLUDE,
     });
 
     if (!invoice) throw new AppError('Invoice not found', 404);
@@ -334,6 +344,7 @@ export const updateInvoice = async (req: AuthRequest, res: Response, next: NextF
       where: { id },
       data: {
         ...(data.status ? { status: data.status } : {}),
+        ...(data.accountId !== undefined ? { accountId: data.accountId || null } : {}),
         ...(data.billToName ? { billToName: data.billToName } : {}),
         ...(data.billToAddress ? { billToAddress: data.billToAddress } : {}),
         ...(data.billToCity ? { billToCity: data.billToCity } : {}),
@@ -369,7 +380,7 @@ export const updateInvoice = async (req: AuthRequest, res: Response, next: NextF
           },
         } : {}),
       },
-      include: { items: true, orderRef: { select: { orderNumber: true } } },
+      include: INVOICE_INCLUDE,
     });
 
     res.json({ success: true, message: 'Invoice updated', data: updated });
