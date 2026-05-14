@@ -207,8 +207,8 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(8.5)
       .text('JOB DETAILS', jobX + 6, y, { width: colW - 6, characterSpacing: 1.2, lineBreak: false });
     const jobLabelW = 76;
-    let jy = y + 16;
-    const jobLineH = 13;
+    let jy = y + 14;
+    const jobLineH = 12;
     jobRows.slice(0, 10).forEach((r) => {
       doc.fillColor(NAVY_SOFT).font('Helvetica-Bold').fontSize(8.5)
         .text(r.label, jobX, jy, { width: jobLabelW, lineBreak: false });
@@ -244,8 +244,10 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       for (const c of cols) { colX.push(x); x += c.w; }
     }
 
-    const headRowH = 22;
-    const rowH = 20;
+    // Tightened row metrics so up to ~12 items fit on a single page
+    // alongside the full footer.
+    const headRowH = 20;
+    const rowH = 17;
 
     const FOOTER_BLOCK_H =
       // totals strip + amount-in-words + bank/payment + signature  + extra slack
@@ -386,20 +388,20 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     const _showPayment = !!invoice.paymentTerms;
     const _showBank = _bankRowsForHeight.length > 0;
     const _bankBlockH = (_showPayment || _showBank)
-      ? (14 /* labels */ + Math.max(_showPayment ? 14 : 0, _bankRowsForHeight.length * 12) + 12 /* slack */)
+      ? (12 /* labels */ + Math.max(_showPayment ? 12 : 0, _bankRowsForHeight.length * 11) + 6 /* slack */)
       : 0;
-    const _totalsRowsH = 16
-      + (invoice.taxAmount > 0 ? 16 : 0)
-      + (invoice.shippingCost > 0 ? 16 : 0);
-    const _amountWordsH = invoice.amountInWords ? 22 : 18;
+    const _totalsRowsH = 14
+      + (invoice.taxAmount > 0 ? 14 : 0)
+      + (invoice.shippingCost > 0 ? 14 : 0);
+    const _amountWordsH = invoice.amountInWords ? 18 : 14;
     const FOOTER_TOTAL_H =
-      14   /* closing rule */ +
-      _totalsRowsH + 2 + 26 + 6 + 22 + 6 /* TOTAL DUE panel */ +
+      10   /* closing rule */ +
+      _totalsRowsH + 2 + 22 + 4 + 20 + 4 /* TOTAL DUE panel */ +
       _amountWordsH +
-      14   /* divider */ +
+      10   /* divider */ +
       _bankBlockH +
-      12 + 14 + 16 /* signature: divider + label + sig area */ +
-      36 + 28 /* disclaimer: gap + two lines */;
+      8 + 12 + 14 /* signature: divider + label + sig area */ +
+      18 + 22 /* disclaimer: gap + two lines */;
 
     // If the entire footer doesn't fit below the items, start a fresh page.
     if (y + FOOTER_TOTAL_H > contentBottom(doc)) {
@@ -410,7 +412,7 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     // Closing rule under the table
     doc.lineWidth(0.6).strokeColor(DIVIDER)
       .moveTo(left, y).lineTo(right, y).stroke();
-    y += 14;
+    y += 10;
 
     // ===================================================================
     //  TOTALS  (right-aligned card) — renders inline after items
@@ -420,8 +422,8 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
 
     const drawTotalsRow = (label: string, value: string, opts?: { strong?: boolean; gap?: number }) => {
       const strong = !!opts?.strong;
-      const fontSize = strong ? 12 : 9.5;
-      doc.fillColor(strong ? NAVY : MUTED).font('Helvetica').fontSize(strong ? 9.5 : 9.5)
+      const fontSize = strong ? 11.5 : 9;
+      doc.fillColor(strong ? NAVY : MUTED).font('Helvetica').fontSize(strong ? 9 : 9)
         .text(label, totalsX, y + (strong ? 2 : 0), {
           width: totalsW * 0.55, lineBreak: false,
         });
@@ -429,7 +431,7 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
         .text(value, totalsX + totalsW * 0.55, y, {
           width: totalsW * 0.45, align: 'right', lineBreak: false,
         });
-      y += opts?.gap ?? (strong ? 22 : 16);
+      y += opts?.gap ?? (strong ? 20 : 14);
     };
 
     drawTotalsRow('Subtotal', `${invoice.currency} ${fmtNum(invoice.subtotal)}`);
@@ -442,30 +444,30 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     }
     // Emphasized Total — navy tinted background panel + bigger font
     y += 2;
-    doc.fillColor(NAVY_TINT).rect(totalsX - 6, y, totalsW + 6, 26).fill();
+    doc.fillColor(NAVY_TINT).rect(totalsX - 6, y, totalsW + 6, 22).fill();
     doc.lineWidth(0.7).strokeColor(NAVY).moveTo(totalsX - 6, y).lineTo(right, y).stroke();
-    doc.lineWidth(0.7).strokeColor(NAVY).moveTo(totalsX - 6, y + 26).lineTo(right, y + 26).stroke();
-    y += 6;
+    doc.lineWidth(0.7).strokeColor(NAVY).moveTo(totalsX - 6, y + 22).lineTo(right, y + 22).stroke();
+    y += 4;
     drawTotalsRow('TOTAL DUE', `${invoice.currency} ${fmtNum(invoice.total)}`, { strong: true });
-    y += 6;
+    y += 4;
 
     // Amount in words — italic muted, with a soft tint panel and a navy
     // left bar so it reads as a single distinct callout.
     if (invoice.amountInWords) {
       const wordsW = fullW * 0.58;
-      const wordsH = 22;
-      doc.fillColor(NAVY_TINT_2).rect(left, y - 4, wordsW, wordsH).fill();
-      doc.fillColor(NAVY).rect(left, y - 4, 2.5, wordsH).fill();
-      doc.fillColor(NAVY_SOFT).font('Helvetica-Oblique').fontSize(9)
-        .text(invoice.amountInWords, left + 8, y + 1, {
+      const wordsH = 18;
+      doc.fillColor(NAVY_TINT_2).rect(left, y - 3, wordsW, wordsH).fill();
+      doc.fillColor(NAVY).rect(left, y - 3, 2.5, wordsH).fill();
+      doc.fillColor(NAVY_SOFT).font('Helvetica-Oblique').fontSize(8.5)
+        .text(invoice.amountInWords, left + 8, y, {
           width: wordsW - 12, lineBreak: false, ellipsis: true,
         });
       y += wordsH;
     } else {
-      y += 18;
+      y += 14;
     }
     doc.lineWidth(0.6).strokeColor(DIVIDER).moveTo(left, y).lineTo(right, y).stroke();
-    y += 14;
+    y += 10;
 
     // ===================================================================
     //  PAYMENT TERMS  +  BANK DETAILS  (two columns, only if data exists)
@@ -508,55 +510,53 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
           .text('—', billX, py, { width: leftColW, lineBreak: false });
       }
 
-      let by = y + 14;
+      let by = y + 12;
       const bankLabelW = 60;
       bankRows.forEach((r) => {
-        doc.fillColor(NAVY_SOFT).font('Helvetica-Bold').fontSize(8.5)
+        doc.fillColor(NAVY_SOFT).font('Helvetica-Bold').fontSize(8)
           .text(r.label, jobX, by, { width: bankLabelW, lineBreak: false });
-        doc.fillColor(TEXT).font('Helvetica').fontSize(8.5)
+        doc.fillColor(TEXT).font('Helvetica').fontSize(8)
           .text(r.value, jobX + bankLabelW, by, {
             width: rightColW - bankLabelW, lineBreak: false, ellipsis: true,
           });
-        by += 12;
+        by += 11;
       });
 
-      y = Math.max(py + 18, by + 6);
+      y = Math.max(py + 16, by + 4);
     }
 
     // ===================================================================
     //  SIGNATURE  ·  Prepared / Approved
     // ===================================================================
-    // (Footer height was reserved up-front, so no ensureSpace here.)
     doc.lineWidth(0.6).strokeColor(DIVIDER).moveTo(left, y).lineTo(right, y).stroke();
-    y += 12;
+    y += 8;
     doc.fillColor(BRAND_RED).rect(left, y + 1, 2, 9).fill();
     doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(9)
       .text(`FOR ${invoice.shipFromName.toUpperCase()}`, left + 6, y, {
         width: fullW - 6, characterSpacing: 1.2, lineBreak: false, ellipsis: true,
       });
-    y += 14;
+    y += 12;
     const sigW = (fullW - colGap) / 2;
     doc.lineWidth(0.5).strokeColor(NAVY_SOFT)
-      .moveTo(left, y + 14).lineTo(left + sigW, y + 14).stroke();
-    doc.moveTo(left + sigW + colGap, y + 14).lineTo(right, y + 14).stroke();
-    doc.fillColor(NAVY_SOFT).font('Helvetica-Bold').fontSize(8.5)
-      .text('Prepared By', left, y + 16, { width: sigW, lineBreak: false })
-      .text('Approved By', left + sigW + colGap, y + 16, { width: sigW, lineBreak: false });
+      .moveTo(left, y + 12).lineTo(left + sigW, y + 12).stroke();
+    doc.moveTo(left + sigW + colGap, y + 12).lineTo(right, y + 12).stroke();
+    doc.fillColor(NAVY_SOFT).font('Helvetica-Bold').fontSize(8)
+      .text('Prepared By', left, y + 14, { width: sigW, lineBreak: false })
+      .text('Approved By', left + sigW + colGap, y + 14, { width: sigW, lineBreak: false });
 
     // ===================================================================
     //  DISCLAIMER  ·  fine-print at the very bottom
     // ===================================================================
-    y += 36;
-    // (Footer height was reserved up-front, so no ensureSpace here.)
+    y += 30;
     // Soft tint band for the disclaimer so it visually closes off the page
-    doc.fillColor(NAVY_TINT_2).rect(left, y - 3, fullW, 26).fill();
-    doc.fillColor(NAVY_SOFT).font('Helvetica').fontSize(8.5)
+    doc.fillColor(NAVY_TINT_2).rect(left, y - 2, fullW, 22).fill();
+    doc.fillColor(NAVY_SOFT).font('Helvetica').fontSize(8)
       .text(
         'In case of any discrepancy in the invoice, kindly inform immediately or within 24hrs.',
         left, y,
         { width: fullW, align: 'center', lineBreak: false, ellipsis: true },
       );
-    y += 12;
+    y += 10;
     doc.fillColor(MUTED).font('Helvetica-Oblique').fontSize(8)
       .text(
         'This is a computer-generated document and does not require a signature.',
