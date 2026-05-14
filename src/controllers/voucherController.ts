@@ -5,6 +5,7 @@ import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../types';
 import { uploadFileToGCS, deleteFileFromGCS } from '../config/gcs';
+import { generateVoucherPdfBuffer } from '../utils/voucherPdfGenerator';
 
 const VOUCHER_PREFIX = 'VCH';
 const VOUCHER_SEQ_PAD = 5;
@@ -30,6 +31,8 @@ const createSchema = z.object({
   referenceType: z.nativeEnum(VoucherReferenceType).default(VoucherReferenceType.NONE),
   invoiceId: z.string().uuid().optional().or(z.literal('')),
   orderId: z.string().uuid().optional().or(z.literal('')),
+  accountId: z.string().uuid().optional().or(z.literal('')),
+  contraAccountId: z.string().uuid().optional().or(z.literal('')),
   partyName: z.string().optional(),
   narration: z.string().optional(),
 });
@@ -54,6 +57,18 @@ type FileMeta = {
   gcsPath?: string;
 };
 
+const ACCOUNT_INCLUDE = {
+  accountGroup: { select: { id: true, code: true, name: true, groupType: true } },
+} as const;
+
+const VOUCHER_INCLUDE = {
+  invoice: { select: { id: true, invoiceNumber: true, total: true, currency: true, billToName: true } },
+  order: { select: { id: true, orderNumber: true, price: true } },
+  account: { include: ACCOUNT_INCLUDE },
+  contraAccount: { include: ACCOUNT_INCLUDE },
+  user: { select: { firstName: true, lastName: true, email: true } },
+} as const;
+
 export const createVoucher = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const parsed = createSchema.parse(req.body);
@@ -62,6 +77,8 @@ export const createVoucher = async (req: AuthRequest, res: Response, next: NextF
 
     let invoiceId: string | null = parsed.invoiceId || null;
     let orderId: string | null = parsed.orderId || null;
+    const accountId: string | null = parsed.accountId || null;
+    const contraAccountId: string | null = parsed.contraAccountId || null;
 
     if (parsed.referenceType === VoucherReferenceType.INVOICE) {
       if (!invoiceId) throw new AppError('invoiceId is required when referenceType is INVOICE', 400);
@@ -80,6 +97,15 @@ export const createVoucher = async (req: AuthRequest, res: Response, next: NextF
     } else {
       invoiceId = null;
       orderId = null;
+    }
+
+    if (accountId) {
+      const acc = await prisma.account.findUnique({ where: { id: accountId } });
+      if (!acc) throw new AppError('Party account not found', 404);
+    }
+    if (contraAccountId) {
+      const acc = await prisma.account.findUnique({ where: { id: contraAccountId } });
+      if (!acc) throw new AppError('Contra account not found', 404);
     }
 
     const fileMeta: FileMeta = {};
@@ -113,6 +139,8 @@ export const createVoucher = async (req: AuthRequest, res: Response, next: NextF
             referenceType: parsed.referenceType,
             invoiceId,
             orderId,
+            accountId,
+            contraAccountId,
             partyName: parsed.partyName || null,
             narration: parsed.narration || null,
             fileUrl: fileMeta.fileUrl ?? null,
@@ -122,11 +150,7 @@ export const createVoucher = async (req: AuthRequest, res: Response, next: NextF
             gcsPath: fileMeta.gcsPath ?? null,
             userId: req.user!.id,
           },
-          include: {
-            invoice: { select: { id: true, invoiceNumber: true, total: true, currency: true, billToName: true } },
-            order: { select: { id: true, orderNumber: true, price: true } },
-            user: { select: { firstName: true, lastName: true, email: true } },
-          },
+          include: VOUCHER_INCLUDE,
         });
         break;
       } catch (e: unknown) {
@@ -153,6 +177,7 @@ export const getVouchers = async (req: AuthRequest, res: Response, next: NextFun
     const type = req.query.type as VoucherType | undefined;
     const invoiceId = req.query.invoiceId as string | undefined;
     const orderId = req.query.orderId as string | undefined;
+    const accountId = req.query.accountId as string | undefined;
     const search = req.query.search as string | undefined;
     const isAdmin = req.user!.role === Role.ADMIN;
 
@@ -161,6 +186,7 @@ export const getVouchers = async (req: AuthRequest, res: Response, next: NextFun
       ...(type ? { type } : {}),
       ...(invoiceId ? { invoiceId } : {}),
       ...(orderId ? { orderId } : {}),
+      ...(accountId ? { accountId } : {}),
       ...(search ? {
         OR: [
           { voucherNumber: { contains: search, mode: 'insensitive' as const } },
@@ -177,11 +203,7 @@ export const getVouchers = async (req: AuthRequest, res: Response, next: NextFun
         skip,
         take: limit,
         orderBy: { voucherDate: 'desc' },
-        include: {
-          invoice: { select: { id: true, invoiceNumber: true, total: true, currency: true, billToName: true } },
-          order: { select: { id: true, orderNumber: true, price: true } },
-          user: { select: { firstName: true, lastName: true, email: true } },
-        },
+        include: VOUCHER_INCLUDE,
       }),
       prisma.voucher.count({ where }),
     ]);
@@ -201,11 +223,7 @@ export const getVoucher = async (req: AuthRequest, res: Response, next: NextFunc
     const isAdmin = req.user!.role === Role.ADMIN;
     const voucher = await prisma.voucher.findFirst({
       where: { id: req.params.id, ...(isAdmin ? {} : { userId: req.user!.id }) },
-      include: {
-        invoice: { select: { id: true, invoiceNumber: true, total: true, currency: true, billToName: true } },
-        order: { select: { id: true, orderNumber: true, price: true } },
-        user: { select: { firstName: true, lastName: true, email: true } },
-      },
+      include: VOUCHER_INCLUDE,
     });
     if (!voucher) throw new AppError('Voucher not found', 404);
     res.json({ success: true, data: voucher });
@@ -223,7 +241,7 @@ export const deleteVoucher = async (req: AuthRequest, res: Response, next: NextF
     if (!voucher) throw new AppError('Voucher not found', 404);
 
     if (voucher.gcsPath) {
-      try { await deleteFileFromGCS(voucher.gcsPath); } catch { /* ignore - record cleanup is priority */ }
+      try { await deleteFileFromGCS(voucher.gcsPath); } catch { /* ignore */ }
     }
 
     await prisma.voucher.delete({ where: { id: voucher.id } });
@@ -322,6 +340,69 @@ export const getReferenceValue = async (req: AuthRequest, res: Response, next: N
     }
 
     throw new AppError('Invalid type. Use INVOICE or ORDER', 400);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const downloadVoucherPdf = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const isAdmin = req.user!.role === Role.ADMIN;
+    const v = await prisma.voucher.findFirst({
+      where: { id: req.params.id, ...(isAdmin ? {} : { userId: req.user!.id }) },
+      include: VOUCHER_INCLUDE,
+    });
+    if (!v) throw new AppError('Voucher not found', 404);
+
+    const bank = await prisma.bankAccount.findFirst({
+      where: { isDefault: true },
+      select: { companyTrn: true },
+    });
+
+    const buffer = await generateVoucherPdfBuffer({
+      voucherNumber: v.voucherNumber,
+      type: v.type,
+      direction: v.direction,
+      voucherDate: v.voucherDate,
+      amount: v.amount,
+      currency: v.currency,
+      referenceType: v.referenceType,
+      partyName: v.partyName,
+      narration: v.narration,
+      account: v.account ? {
+        code: v.account.code,
+        name: v.account.name,
+        address: v.account.address || v.account.deliveryAddress || null,
+        mobile1: v.account.mobile1 || null,
+        trn: v.account.trn || null,
+        accountGroup: v.account.accountGroup ? { name: v.account.accountGroup.name } : null,
+      } : null,
+      contraAccount: v.contraAccount ? {
+        code: v.contraAccount.code,
+        name: v.contraAccount.name,
+        accountGroup: v.contraAccount.accountGroup ? { name: v.contraAccount.accountGroup.name } : null,
+      } : null,
+      invoice: v.invoice ? {
+        invoiceNumber: v.invoice.invoiceNumber,
+        total: v.invoice.total,
+        currency: v.invoice.currency,
+        billToName: v.invoice.billToName,
+      } : null,
+      order: v.order ? {
+        orderNumber: v.order.orderNumber,
+        price: v.order.price,
+      } : null,
+      user: v.user ? {
+        firstName: v.user.firstName,
+        lastName: v.user.lastName,
+        email: v.user.email,
+      } : null,
+      companyTrn: bank?.companyTrn || undefined,
+    });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${v.voucherNumber}.pdf"`);
+    res.send(buffer);
   } catch (error) {
     next(error);
   }
