@@ -434,11 +434,13 @@ model Account {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  accountGroup       AccountGroup   @relation(fields: [accountGroupId], references: [id])
-  customerGroup      CustomerGroup? @relation(fields: [customerGroupId], references: [id])
-  salesperson        Salesperson?   @relation("AccountPrimarySalesperson", fields: [repId], references: [id])
-  salesperson2       Salesperson?   @relation("AccountSecondarySalesperson", fields: [rep2Id], references: [id])
-  subAccounts        SubAccount[]
+  accountGroup   AccountGroup   @relation(fields: [accountGroupId], references: [id])
+  customerGroup  CustomerGroup? @relation(fields: [customerGroupId], references: [id])
+  salesperson    Salesperson?   @relation("AccountPrimarySalesperson", fields: [repId], references: [id])
+  salesperson2   Salesperson?   @relation("AccountSecondarySalesperson", fields: [rep2Id], references: [id])
+  subAccounts    SubAccount[]
+  voucherParties Voucher[]      @relation("VoucherPartyAccount")
+  voucherContras Voucher[]      @relation("VoucherContraAccount")
 
   @@map("accounts")
 }
@@ -499,32 +501,38 @@ model BankAccount {
 }
 
 model Voucher {
-  id            String               @id @default(uuid())
-  voucherNumber String               @unique
-  type          VoucherType
-  direction     VoucherDirection
-  voucherDate   DateTime             @default(now())
-  amount        Float
-  currency      String               @default("AED")
-  referenceType VoucherReferenceType @default(NONE)
-  invoiceId     String?
-  orderId       String?
-  partyName     String?
-  narration     String?
-  fileUrl       String?
-  fileName      String?
-  fileMimeType  String?
-  fileSize      Int?
-  gcsPath       String?
-  userId        String
-  createdAt     DateTime             @default(now())
-  updatedAt     DateTime             @updatedAt
+  id              String               @id @default(uuid())
+  voucherNumber   String               @unique
+  type            VoucherType
+  direction       VoucherDirection
+  voucherDate     DateTime             @default(now())
+  amount          Float
+  currency        String               @default("AED")
+  referenceType   VoucherReferenceType @default(NONE)
+  invoiceId       String?
+  orderId         String?
+  accountId       String?
+  contraAccountId String?
+  partyName       String?
+  narration       String?
+  fileUrl         String?
+  fileName        String?
+  fileMimeType    String?
+  fileSize        Int?
+  gcsPath         String?
+  userId          String
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
 
-  user    User     @relation(fields: [userId], references: [id])
-  invoice Invoice? @relation(fields: [invoiceId], references: [id])
-  order   Order?   @relation(fields: [orderId], references: [id])
+  user          User     @relation(fields: [userId], references: [id])
+  invoice       Invoice? @relation(fields: [invoiceId], references: [id])
+  order         Order?   @relation(fields: [orderId], references: [id])
+  account       Account? @relation("VoucherPartyAccount", fields: [accountId], references: [id])
+  contraAccount Account? @relation("VoucherContraAccount", fields: [contraAccountId], references: [id])
 
   @@index([invoiceId])
   @@index([orderId])
+  @@index([accountId])
+  @@index([contraAccountId])
   @@map("vouchers")
 }
