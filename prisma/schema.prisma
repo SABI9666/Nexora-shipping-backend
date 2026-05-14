@@ -60,6 +60,29 @@ enum AccountGroupType {
   TRADING
 }
 
+enum VoucherType {
+  CASH
+  PURCHASE
+  PAYMENT
+  BANK
+  JOURNAL
+  RECEIPT
+  SUPPLIER_PAYMENT
+  CREDIT_NOTE
+  DEBIT_NOTE
+}
+
+enum VoucherDirection {
+  DEBIT
+  CREDIT
+}
+
+enum VoucherReferenceType {
+  NONE
+  INVOICE
+  ORDER
+}
+
 model User {
   id           String   @id @default(uuid())
   email        String   @unique
@@ -78,6 +101,7 @@ model User {
   documents  Document[]
   invoices   Invoice[]
   quotations Quotation[]
+  vouchers   Voucher[]
 
   @@map("users")
 }
@@ -109,6 +133,7 @@ model Order {
   documents  Document[]
   invoices   Invoice[]
   quotations Quotation[]
+  vouchers   Voucher[]
 
   @@map("orders")
 }
@@ -211,9 +236,10 @@ model Invoice {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user     User         @relation(fields: [userId], references: [id])
-  orderRef Order?       @relation(fields: [orderId], references: [id])
+  user     User          @relation(fields: [userId], references: [id])
+  orderRef Order?        @relation(fields: [orderId], references: [id])
   items    InvoiceItem[]
+  vouchers Voucher[]
 
   @@map("invoices")
 }
@@ -381,4 +407,35 @@ model ItemMaster {
   updatedAt DateTime @updatedAt
 
   @@map("item_masters")
+}
+
+model Voucher {
+  id            String               @id @default(uuid())
+  voucherNumber String               @unique
+  type          VoucherType
+  direction     VoucherDirection
+  voucherDate   DateTime             @default(now())
+  amount        Float
+  currency      String               @default("AED")
+  referenceType VoucherReferenceType @default(NONE)
+  invoiceId     String?
+  orderId       String?
+  partyName     String?
+  narration     String?
+  fileUrl       String?
+  fileName      String?
+  fileMimeType  String?
+  fileSize      Int?
+  gcsPath       String?
+  userId        String
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  user    User     @relation(fields: [userId], references: [id])
+  invoice Invoice? @relation(fields: [invoiceId], references: [id])
+  order   Order?   @relation(fields: [orderId], references: [id])
+
+  @@index([invoiceId])
+  @@index([orderId])
+  @@map("vouchers")
 }

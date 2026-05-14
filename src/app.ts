@@ -19,6 +19,7 @@ import accountGroupRoutes from './routes/accountGroups';
 import customerGroupRoutes from './routes/customerGroups';
 import accountRoutes from './routes/accounts';
 import itemMasterRoutes from './routes/itemMaster';
+import voucherRoutes from './routes/vouchers';
 import { errorHandler } from './middleware/errorHandler';
 
 const app = express();
@@ -105,6 +106,7 @@ app.use('/api/account-groups', accountGroupRoutes);
 app.use('/api/customer-groups', customerGroupRoutes);
 app.use('/api/accounts', accountRoutes);
 app.use('/api/items', itemMasterRoutes);
+app.use('/api/vouchers', voucherRoutes);
 
 app.use('*', (_req, res) => {
   res.status(404).json({ success: false, message: 'Route not found' });
