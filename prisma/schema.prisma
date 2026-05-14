@@ -60,6 +60,29 @@ enum AccountGroupType {
   TRADING
 }
 
+enum VoucherType {
+  CASH
+  PURCHASE
+  PAYMENT
+  BANK
+  JOURNAL
+  RECEIPT
+  SUPPLIER_PAYMENT
+  CREDIT_NOTE
+  DEBIT_NOTE
+}
+
+enum VoucherDirection {
+  DEBIT
+  CREDIT
+}
+
+enum VoucherReferenceType {
+  NONE
+  INVOICE
+  ORDER
+}
+
 model User {
   id           String   @id @default(uuid())
   email        String   @unique
@@ -78,6 +101,7 @@ model User {
   documents  Document[]
   invoices   Invoice[]
   quotations Quotation[]
+  vouchers   Voucher[]
 
   @@map("users")
 }
@@ -97,18 +121,23 @@ model Order {
   length              Float?
   width               Float?
   height              Float?
+  cbm                 Float?
   declaredValue       Float?
   price               Float?
   specialInstructions String?
   userId              String
+  repId               String?
+  repName             String?
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
 
-  user       User        @relation(fields: [userId], references: [id])
-  shipment   Shipment?
-  documents  Document[]
-  invoices   Invoice[]
-  quotations Quotation[]
+  user        User         @relation(fields: [userId], references: [id])
+  salesperson Salesperson? @relation("OrderSalesperson", fields: [repId], references: [id])
+  shipment    Shipment?
+  documents   Document[]
+  invoices    Invoice[]
+  quotations  Quotation[]
+  vouchers    Voucher[]
 
   @@map("orders")
 }
@@ -193,13 +222,40 @@ model Invoice {
   shipFromCity    String @default("London")
   shipFromCountry String @default("GB")
 
+  // Issuer / company
+  companyTrn   String?
+
+  // Shipment header
+  jobNo          String?
+  originPort     String?
+  destPort       String?
+  masterBl       String?
+  houseBl        String?
+  commodity      String?
+  boeNumber      String?
+  grossWeight    String?
+  volume         String?
+  packages       String?
+  shipperName    String?
+  consigneeName  String?
+  customerRef    String?
+
   // Financial
-  currency     String @default("USD")
+  currency     String @default("AED")
   subtotal     Float  @default(0)
   taxRate      Float  @default(0)
   taxAmount    Float  @default(0)
   shippingCost Float  @default(0)
   total        Float  @default(0)
+  amountInWords String?
+
+  // Bank details
+  bankName      String?
+  bankAddress   String?
+  accountName   String?
+  accountNumber String?
+  iban          String?
+  swiftCode     String?
 
   // Meta
   paymentTerms String?
@@ -211,20 +267,27 @@ model Invoice {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user     User         @relation(fields: [userId], references: [id])
-  orderRef Order?       @relation(fields: [orderId], references: [id])
+  user     User          @relation(fields: [userId], references: [id])
+  orderRef Order?        @relation(fields: [orderId], references: [id])
   items    InvoiceItem[]
+  vouchers Voucher[]
 
   @@map("invoices")
 }
 
 model InvoiceItem {
-  id          String  @id @default(uuid())
-  invoiceId   String
-  description String
-  quantity    Float   @default(1)
-  unitPrice   Float
-  amount      Float
+  id             String  @id @default(uuid())
+  invoiceId      String
+  description    String
+  quantity       Float   @default(1)
+  unitPrice      Float
+  amount         Float
+  lineCurrency   String?
+  exchangeRate   Float?  @default(1)
+  vatPercent     Float?  @default(0)
+  vatAmount      Float?  @default(0)
+  totalInBase    Float?
+  remarks        String?
 
   invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
@@ -316,6 +379,24 @@ model CustomerGroup {
   @@map("customer_groups")
 }
 
+model Salesperson {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  name      String
+  phone     String?
+  email     String?
+  notes     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  primaryAccounts   Account[] @relation("AccountPrimarySalesperson")
+  secondaryAccounts Account[] @relation("AccountSecondarySalesperson")
+  orders            Order[]   @relation("OrderSalesperson")
+
+  @@map("salespersons")
+}
+
 model Account {
   id              String  @id @default(uuid())
   code            String  @unique
@@ -338,6 +419,8 @@ model Account {
   acMobileNo      String?
   rep             String?
   rep2            String?
+  repId           String?
+  rep2Id          String?
   opBalance       Float   @default(0)
   opBalanceType   String  @default("Credit")
   narration       String?
@@ -351,9 +434,11 @@ model Account {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  accountGroup  AccountGroup   @relation(fields: [accountGroupId], references: [id])
-  customerGroup CustomerGroup? @relation(fields: [customerGroupId], references: [id])
-  subAccounts   SubAccount[]
+  accountGroup       AccountGroup   @relation(fields: [accountGroupId], references: [id])
+  customerGroup      CustomerGroup? @relation(fields: [customerGroupId], references: [id])
+  salesperson        Salesperson?   @relation("AccountPrimarySalesperson", fields: [repId], references: [id])
+  salesperson2       Salesperson?   @relation("AccountSecondarySalesperson", fields: [rep2Id], references: [id])
+  subAccounts        SubAccount[]
 
   @@map("accounts")
 }
@@ -381,4 +466,65 @@ model ItemMaster {
   updatedAt DateTime @updatedAt
 
   @@map("item_masters")
+}
+
+model ChargeItem {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  description String?
+  defaultRate Float?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("charge_items")
+}
+
+model BankAccount {
+  id            String   @id @default(uuid())
+  label         String   @unique
+  bankName      String
+  bankAddress   String?
+  accountName   String
+  accountNumber String
+  iban          String?
+  swiftCode     String?
+  currency      String?
+  companyTrn    String?
+  isDefault     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("bank_accounts")
+}
+
+model Voucher {
+  id            String               @id @default(uuid())
+  voucherNumber String               @unique
+  type          VoucherType
+  direction     VoucherDirection
+  voucherDate   DateTime             @default(now())
+  amount        Float
+  currency      String               @default("AED")
+  referenceType VoucherReferenceType @default(NONE)
+  invoiceId     String?
+  orderId       String?
+  partyName     String?
+  narration     String?
+  fileUrl       String?
+  fileName      String?
+  fileMimeType  String?
+  fileSize      Int?
+  gcsPath       String?
+  userId        String
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  user    User     @relation(fields: [userId], references: [id])
+  invoice Invoice? @relation(fields: [invoiceId], references: [id])
+  order   Order?   @relation(fields: [orderId], references: [id])
+
+  @@index([invoiceId])
+  @@index([orderId])
+  @@map("vouchers")
 }
