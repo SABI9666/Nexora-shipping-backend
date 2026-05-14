@@ -22,6 +22,7 @@ import itemMasterRoutes from './routes/itemMaster';
 import salespersonRoutes from './routes/salespersons';
 import chargeItemRoutes from './routes/chargeItems';
 import bankAccountRoutes from './routes/bankAccounts';
+import voucherRoutes from './routes/vouchers';
 import { errorHandler } from './middleware/errorHandler';
 import { ensureStandardAccountGroups } from './utils/bootstrapAccountGroups';
 import { ensureStandardChargeItems } from './utils/bootstrapChargeItems';
@@ -114,6 +115,7 @@ app.use('/api/items', itemMasterRoutes);
 app.use('/api/salespersons', salespersonRoutes);
 app.use('/api/charge-items', chargeItemRoutes);
 app.use('/api/bank-accounts', bankAccountRoutes);
+app.use('/api/vouchers', voucherRoutes);
 
 app.use('*', (_req, res) => {
   res.status(404).json({ success: false, message: 'Route not found' });
