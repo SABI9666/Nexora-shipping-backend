@@ -27,9 +27,6 @@ function round2(n: number) {
   return Math.round(n * 100) / 100;
 }
 
-// =====================================================================
-// 1. SALES SUMMARY  —  invoices by period
-// =====================================================================
 export const salesSummary = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const isAdmin = req.user!.role === Role.ADMIN;
@@ -108,15 +105,9 @@ export const salesSummary = async (req: AuthRequest, res: Response, next: NextFu
           paidAmount: round2(paidAmount),
           outstandingAmount: round2(outstandingAmount),
         },
-        byStatus: Object.entries(byStatus).map(([k, v]) => ({
-          status: k, count: v.count, amount: round2(v.amount),
-        })),
-        byCurrency: Object.entries(byCurrency).map(([k, v]) => ({
-          currency: k, count: v.count, amount: round2(v.amount),
-        })),
-        byMonth: Object.entries(byMonth)
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([k, v]) => ({ month: k, count: v.count, amount: round2(v.amount) })),
+        byStatus: Object.entries(byStatus).map(([k, v]) => ({ status: k, count: v.count, amount: round2(v.amount) })),
+        byCurrency: Object.entries(byCurrency).map(([k, v]) => ({ currency: k, count: v.count, amount: round2(v.amount) })),
+        byMonth: Object.entries(byMonth).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => ({ month: k, count: v.count, amount: round2(v.amount) })),
         topCustomers,
         invoices,
       },
@@ -126,9 +117,6 @@ export const salesSummary = async (req: AuthRequest, res: Response, next: NextFu
   }
 };
 
-// =====================================================================
-// 2. ORDERS SUMMARY
-// =====================================================================
 export const ordersSummary = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const isAdmin = req.user!.role === Role.ADMIN;
@@ -182,21 +170,10 @@ export const ordersSummary = async (req: AuthRequest, res: Response, next: NextF
       success: true,
       data: {
         period: { from, to },
-        totals: {
-          orderCount: orders.length,
-          totalValue: round2(totalValue),
-          totalCbm: round2(cbmTotal),
-          totalWeight: round2(weightTotal),
-        },
-        byStatus: Object.entries(byStatus).map(([k, v]) => ({
-          status: k, count: v.count, amount: round2(v.amount),
-        })),
-        bySalesperson: Object.entries(bySalesperson)
-          .map(([_k, v]) => ({ name: v.name, count: v.count, amount: round2(v.amount) }))
-          .sort((a, b) => b.amount - a.amount),
-        byDestination: Object.entries(byDestination)
-          .map(([k, v]) => ({ country: k, count: v.count, amount: round2(v.amount) }))
-          .sort((a, b) => b.amount - a.amount),
+        totals: { orderCount: orders.length, totalValue: round2(totalValue), totalCbm: round2(cbmTotal), totalWeight: round2(weightTotal) },
+        byStatus: Object.entries(byStatus).map(([k, v]) => ({ status: k, count: v.count, amount: round2(v.amount) })),
+        bySalesperson: Object.entries(bySalesperson).map(([_k, v]) => ({ name: v.name, count: v.count, amount: round2(v.amount) })).sort((a, b) => b.amount - a.amount),
+        byDestination: Object.entries(byDestination).map(([k, v]) => ({ country: k, count: v.count, amount: round2(v.amount) })).sort((a, b) => b.amount - a.amount),
         orders,
       },
     });
@@ -205,9 +182,6 @@ export const ordersSummary = async (req: AuthRequest, res: Response, next: NextF
   }
 };
 
-// =====================================================================
-// 3. VOUCHER REGISTER
-// =====================================================================
 export const voucherRegister = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const isAdmin = req.user!.role === Role.ADMIN;
@@ -254,18 +228,8 @@ export const voucherRegister = async (req: AuthRequest, res: Response, next: Nex
       data: {
         period: { from, to },
         filters: { type: type || null, accountId: accountId || null },
-        totals: {
-          voucherCount: vouchers.length,
-          totalCredit: round2(totalCredit),
-          totalDebit: round2(totalDebit),
-          net: round2(totalDebit - totalCredit),
-        },
-        byType: Object.entries(byType).map(([k, v]) => ({
-          type: k, count: v.count,
-          credit: round2(v.credit),
-          debit: round2(v.debit),
-          net: round2(v.debit - v.credit),
-        })),
+        totals: { voucherCount: vouchers.length, totalCredit: round2(totalCredit), totalDebit: round2(totalDebit), net: round2(totalDebit - totalCredit) },
+        byType: Object.entries(byType).map(([k, v]) => ({ type: k, count: v.count, credit: round2(v.credit), debit: round2(v.debit), net: round2(v.debit - v.credit) })),
         vouchers,
       },
     });
@@ -274,9 +238,6 @@ export const voucherRegister = async (req: AuthRequest, res: Response, next: Nex
   }
 };
 
-// =====================================================================
-// 4. OUTSTANDING RECEIVABLES
-// =====================================================================
 export const outstandingReceivables = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const isAdmin = req.user!.role === Role.ADMIN;
@@ -347,13 +308,8 @@ export const outstandingReceivables = async (req: AuthRequest, res: Response, ne
       success: true,
       data: {
         asOf,
-        totals: {
-          invoiceCount: rows.length,
-          outstandingAed: round2(totalOutstandingAed),
-        },
-        byCurrency: Object.entries(byCurrency).map(([k, v]) => ({
-          currency: k, count: v.count, outstanding: round2(v.outstanding),
-        })),
+        totals: { invoiceCount: rows.length, outstandingAed: round2(totalOutstandingAed) },
+        byCurrency: Object.entries(byCurrency).map(([k, v]) => ({ currency: k, count: v.count, outstanding: round2(v.outstanding) })),
         rows,
       },
     });
@@ -363,7 +319,9 @@ export const outstandingReceivables = async (req: AuthRequest, res: Response, ne
 };
 
 // =====================================================================
-// 5. ACCOUNT STATEMENT (per-account ledger from vouchers)
+// ACCOUNT STATEMENT — combined ledger of invoices (Dr) and vouchers.
+// Includes legacy invoices (no accountId) by case-insensitive name match
+// on billToName so historical data still appears in the statement.
 // =====================================================================
 export const accountStatement = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
@@ -377,6 +335,40 @@ export const accountStatement = async (req: AuthRequest, res: Response, next: Ne
     });
     if (!account) throw new AppError('Account not found', 404);
 
+    // ---- Invoices (matched by accountId OR by name fallback) -------------
+    const nameMatch = account.name.trim();
+    const invoices = await prisma.invoice.findMany({
+      where: {
+        AND: [
+          dateRangeWhere('invoiceDate', from, to),
+          {
+            OR: [
+              { accountId },
+              {
+                AND: [
+                  { accountId: null },
+                  { billToName: { equals: nameMatch, mode: 'insensitive' } },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      orderBy: { invoiceDate: 'asc' },
+      select: {
+        id: true,
+        invoiceNumber: true,
+        invoiceDate: true,
+        currency: true,
+        total: true,
+        jobNo: true,
+        billToName: true,
+        accountId: true,
+        orderRef: { select: { orderNumber: true } },
+      },
+    });
+
+    // ---- Vouchers ----------------------------------------------------------
     const vouchers = await prisma.voucher.findMany({
       where: {
         accountId,
@@ -386,24 +378,19 @@ export const accountStatement = async (req: AuthRequest, res: Response, next: Ne
       include: {
         invoice: { select: { invoiceNumber: true, total: true, currency: true } },
         order: { select: { orderNumber: true } },
-        contraAccount: { select: { code: true, name: true } },
       },
     });
 
-    // Opening balance: account.opBalance with type Debit/Credit.
-    // Standard convention: party balance is shown as Debit (the party owes
-    // us) when positive; Credit when we owe the party.
+    // ---- Opening balance --------------------------------------------------
     const openingDr = account.opBalanceType === 'Debit' ? account.opBalance : 0;
     const openingCr = account.opBalanceType === 'Credit' ? account.opBalance : 0;
 
-    let runningDr = openingDr;
-    let runningCr = openingCr;
-
-    const rows: Array<{
+    type Row = {
       date: Date;
       voucherNumber: string;
-      type: VoucherType;
-      direction: VoucherDirection;
+      type: string;            // 'INVOICE' | VoucherType
+      kind: 'INVOICE' | 'VOUCHER';
+      direction: 'DEBIT' | 'CREDIT';
       reference: string | null;
       narration: string | null;
       currency: string;
@@ -411,31 +398,63 @@ export const accountStatement = async (req: AuthRequest, res: Response, next: Ne
       credit: number;
       runningBalance: number;
       runningSide: 'Dr' | 'Cr';
-    }> = [];
+      linkedInvoice: boolean;  // true if matched by accountId, false if by name
+    };
+
+    const allRows: Row[] = [];
+
+    // Invoices first as Dr entries (customer owes us)
+    for (const inv of invoices) {
+      allRows.push({
+        date: inv.invoiceDate,
+        voucherNumber: `INV ${inv.invoiceNumber}`,
+        type: 'INVOICE',
+        kind: 'INVOICE',
+        direction: 'DEBIT',
+        reference: inv.orderRef ? `ORD ${inv.orderRef.orderNumber}` : (inv.jobNo || null),
+        narration: `Invoice to ${inv.billToName}`,
+        currency: inv.currency,
+        debit: inv.total,
+        credit: 0,
+        runningBalance: 0,
+        runningSide: 'Dr',
+        linkedInvoice: inv.accountId != null,
+      });
+    }
 
     for (const v of vouchers) {
       const debit = v.direction === VoucherDirection.DEBIT ? v.amount : 0;
       const credit = v.direction === VoucherDirection.CREDIT ? v.amount : 0;
-      runningDr += debit;
-      runningCr += credit;
-      const net = runningDr - runningCr;
-      const ref = v.invoice
-        ? `INV ${v.invoice.invoiceNumber}`
-        : v.order ? `ORD ${v.order.orderNumber}`
-        : null;
-      rows.push({
+      const ref = v.invoice ? `INV ${v.invoice.invoiceNumber}` : v.order ? `ORD ${v.order.orderNumber}` : null;
+      allRows.push({
         date: v.voucherDate,
         voucherNumber: v.voucherNumber,
         type: v.type,
+        kind: 'VOUCHER',
         direction: v.direction,
         reference: ref,
         narration: v.narration,
         currency: v.currency,
-        debit: round2(debit),
-        credit: round2(credit),
-        runningBalance: round2(Math.abs(net)),
-        runningSide: net >= 0 ? 'Dr' : 'Cr',
+        debit,
+        credit,
+        runningBalance: 0,
+        runningSide: 'Dr',
+        linkedInvoice: true,
       });
+    }
+
+    // Sort chronologically and compute running balance
+    allRows.sort((a, b) => a.date.getTime() - b.date.getTime());
+    let runningDr = openingDr;
+    let runningCr = openingCr;
+    for (const r of allRows) {
+      runningDr += r.debit;
+      runningCr += r.credit;
+      const net = runningDr - runningCr;
+      r.runningBalance = round2(Math.abs(net));
+      r.runningSide = net >= 0 ? 'Dr' : 'Cr';
+      r.debit = round2(r.debit);
+      r.credit = round2(r.credit);
     }
 
     const closingNet = runningDr - runningCr;
@@ -458,12 +477,11 @@ export const accountStatement = async (req: AuthRequest, res: Response, next: Ne
         totals: {
           totalDebit: round2(runningDr - openingDr),
           totalCredit: round2(runningCr - openingCr),
+          invoiceCount: invoices.length,
+          voucherCount: vouchers.length,
         },
-        closing: {
-          balance: round2(Math.abs(closingNet)),
-          side: closingNet >= 0 ? 'Dr' : 'Cr',
-        },
-        rows,
+        closing: { balance: round2(Math.abs(closingNet)), side: closingNet >= 0 ? 'Dr' : 'Cr' },
+        rows: allRows,
       },
     });
   } catch (error) {
@@ -471,10 +489,6 @@ export const accountStatement = async (req: AuthRequest, res: Response, next: Ne
   }
 };
 
-// =====================================================================
-// 6. DASHBOARD SNAPSHOT — used by the Reports landing cards.
-//    Returns minimal counts/totals across all reports.
-// =====================================================================
 export const dashboardSnapshot = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const isAdmin = req.user!.role === Role.ADMIN;
@@ -488,23 +502,12 @@ export const dashboardSnapshot = async (req: AuthRequest, res: Response, next: N
       voucherCount, vouchersThisMonth, openInvoices,
     ] = await prisma.$transaction([
       prisma.invoice.count({ where: userFilter }),
-      prisma.invoice.aggregate({
-        where: { ...userFilter, invoiceDate: { gte: monthStart } },
-        _sum: { total: true }, _count: { _all: true },
-      }),
+      prisma.invoice.aggregate({ where: { ...userFilter, invoiceDate: { gte: monthStart } }, _sum: { total: true }, _count: { _all: true } }),
       prisma.order.count({ where: userFilter }),
-      prisma.order.aggregate({
-        where: { ...userFilter, createdAt: { gte: monthStart } },
-        _sum: { price: true }, _count: { _all: true },
-      }),
+      prisma.order.aggregate({ where: { ...userFilter, createdAt: { gte: monthStart } }, _sum: { price: true }, _count: { _all: true } }),
       prisma.voucher.count({ where: userFilter }),
-      prisma.voucher.aggregate({
-        where: { ...userFilter, voucherDate: { gte: monthStart } },
-        _sum: { amount: true }, _count: { _all: true },
-      }),
-      prisma.invoice.count({
-        where: { ...userFilter, status: { notIn: [InvoiceStatus.PAID, InvoiceStatus.CANCELLED] } },
-      }),
+      prisma.voucher.aggregate({ where: { ...userFilter, voucherDate: { gte: monthStart } }, _sum: { amount: true }, _count: { _all: true } }),
+      prisma.invoice.count({ where: { ...userFilter, status: { notIn: [InvoiceStatus.PAID, InvoiceStatus.CANCELLED] } } }),
     ]);
 
     res.json({
@@ -533,5 +536,4 @@ export const dashboardSnapshot = async (req: AuthRequest, res: Response, next: N
   }
 };
 
-// Reference the enums so tsc doesn't strip unused imports in transpile.
 void OrderStatus;

@@ -208,7 +208,7 @@ model Invoice {
   invoiceDate   DateTime      @default(now())
   dueDate       DateTime?
 
-  // Bill To
+  // Bill To (free text, kept for legacy)
   billToName    String
   billToAddress String
   billToCity    String
@@ -263,15 +263,18 @@ model Invoice {
 
   // Relations
   orderId   String?
+  accountId String?
   userId    String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   user     User          @relation(fields: [userId], references: [id])
   orderRef Order?        @relation(fields: [orderId], references: [id])
+  account  Account?      @relation("InvoiceAccount", fields: [accountId], references: [id])
   items    InvoiceItem[]
   vouchers Voucher[]
 
+  @@index([accountId])
   @@map("invoices")
 }
 
@@ -441,6 +444,7 @@ model Account {
   subAccounts    SubAccount[]
   voucherParties Voucher[]      @relation("VoucherPartyAccount")
   voucherContras Voucher[]      @relation("VoucherContraAccount")
+  invoices       Invoice[]      @relation("InvoiceAccount")
 
   @@map("accounts")
 }
