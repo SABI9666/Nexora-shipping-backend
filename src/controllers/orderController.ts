@@ -9,17 +9,19 @@ import { generateOrderNumber, generateTrackingNumber, calculateShippingPrice, pa
 const createOrderSchema = z.object({
   pickupAddress: z.string().min(5),
   pickupCity: z.string().min(2),
-  pickupCountry: z.string().length(2),
+  pickupCountry: z.string().length(3),
   deliveryAddress: z.string().min(5),
   deliveryCity: z.string().min(2),
-  deliveryCountry: z.string().length(2),
+  deliveryCountry: z.string().length(3),
   packageDescription: z.string().min(5),
-  weight: z.number().positive().max(1000),
+  weight: z.number().positive(),
   length: z.number().positive().optional(),
   width: z.number().positive().optional(),
   height: z.number().positive().optional(),
+  cbm: z.number().positive().optional(),
   declaredValue: z.number().positive().optional(),
   specialInstructions: z.string().optional(),
+  repId: z.string().uuid().optional().or(z.literal('')),
 });
 
 const updateOrderSchema = z.object({
@@ -27,23 +29,61 @@ const updateOrderSchema = z.object({
   specialInstructions: z.string().optional(),
   packageDescription: z.string().min(5).optional(),
   weight: z.number().positive().max(1000).optional(),
+  cbm: z.number().positive().optional(),
   declaredValue: z.number().positive().optional(),
+  repId: z.string().uuid().optional().or(z.literal('')).or(z.null()),
 });
+
+const orderInclude = {
+  user: { select: { id: true, firstName: true, lastName: true, email: true } },
+  shipment: { select: { id: true, trackingNumber: true, status: true } },
+  salesperson: { select: { id: true, code: true, name: true, phone: true, email: true } },
+  _count: { select: { documents: true } },
+} as const;
+
+async function resolveRep(repId?: string | null) {
+  if (!repId) return { repId: null, repName: null };
+  const sp = await prisma.salesperson.findUnique({
+    where: { id: repId },
+    select: { id: true, name: true },
+  });
+  if (!sp) throw new AppError('Selected salesperson not found', 400);
+  return { repId: sp.id, repName: sp.name };
+}
 
 export const createOrder = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const data = createOrderSchema.parse(req.body);
+    const { repId: rawRepId, ...rest } = data;
 
-    const price = calculateShippingPrice(data.weight, data.pickupCountry, data.deliveryCountry);
+    const price = calculateShippingPrice(rest.weight, rest.pickupCountry, rest.deliveryCountry);
+    const repFields = await resolveRep(rawRepId || null);
 
-    const order = await prisma.order.create({
-      data: {
-        ...data,
-        orderNumber: generateOrderNumber(),
-        price,
-        userId: req.user!.id,
-      },
-    });
+    let order;
+    let attempt = 0;
+    while (true) {
+      try {
+        order = await prisma.order.create({
+          data: {
+            ...rest,
+            orderNumber: await generateOrderNumber(),
+            price,
+            userId: req.user!.id,
+            repId: repFields.repId,
+            repName: repFields.repName,
+          },
+          include: orderInclude,
+        });
+        break;
+      } catch (e: unknown) {
+        const code = (e as { code?: string }).code;
+        if (code === 'P2002' && attempt < 4) {
+          attempt += 1;
+          continue;
+        }
+        throw e;
+      }
+    }
 
     res.status(201).json({
       success: true,
@@ -75,6 +115,7 @@ export const getOrders = async (req: AuthRequest, res: Response, next: NextFunct
           { orderNumber: { contains: search, mode: 'insensitive' as const } },
           { packageDescription: { contains: search, mode: 'insensitive' as const } },
           { deliveryCity: { contains: search, mode: 'insensitive' as const } },
+          { repName: { contains: search, mode: 'insensitive' as const } },
         ],
       } : {}),
     };
@@ -84,11 +125,7 @@ export const getOrders = async (req: AuthRequest, res: Response, next: NextFunct
         where,
         ...paginate(page, limit),
         orderBy: { createdAt: 'desc' },
-        include: {
-          user: { select: { id: true, firstName: true, lastName: true, email: true } },
-          shipment: { select: { id: true, trackingNumber: true, status: true } },
-          _count: { select: { documents: true } },
-        },
+        include: orderInclude,
       }),
       prisma.order.count({ where }),
     ]);
@@ -115,6 +152,7 @@ export const getOrder = async (req: AuthRequest, res: Response, next: NextFuncti
       },
       include: {
         user: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
+        salesperson: { select: { id: true, code: true, name: true, phone: true, email: true } },
         shipment: {
           include: {
             events: { orderBy: { timestamp: 'desc' } },
@@ -144,14 +182,23 @@ export const updateOrder = async (req: AuthRequest, res: Response, next: NextFun
 
     if (!order) throw new AppError('Order not found', 404);
 
-    if (!isAdmin && order.status !== OrderStatus.DRAFT) {
+    // Customers can only edit drafts; admins can edit everything (incl. rep on confirmed/shipped orders)
+    const onlyRepChange =
+      Object.keys(data).length === 1 && Object.prototype.hasOwnProperty.call(data, 'repId');
+    if (!isAdmin && !onlyRepChange && order.status !== OrderStatus.DRAFT) {
       throw new AppError('Only draft orders can be modified', 400);
     }
 
+    const { repId: rawRepId, ...rest } = data;
+    const repPatch =
+      rawRepId === undefined
+        ? {}
+        : await resolveRep(rawRepId || null);
+
     const updated = await prisma.order.update({
       where: { id },
-      data,
-      include: { shipment: true },
+      data: { ...rest, ...repPatch },
+      include: orderInclude,
     });
 
     res.json({ success: true, message: 'Order updated', data: updated });

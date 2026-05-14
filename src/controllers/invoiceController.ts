@@ -4,14 +4,43 @@ import { InvoiceStatus, Role } from '@prisma/client';
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../types';
-import { generateInvoiceNumber, paginate } from '../utils/helpers';
+import { generateInvoiceNumber, deriveJobNumber, paginate } from '../utils/helpers';
 import { generateInvoiceWordBuffer } from '../utils/wordGenerator';
+import { generateInvoicePdfBuffer } from '../utils/invoicePdfGenerator';
+import { amountToWords } from '../utils/numberToWords';
 
 const invoiceItemSchema = z.object({
   description: z.string().min(1),
   quantity: z.number().positive(),
   unitPrice: z.number().min(0),
+  lineCurrency: z.string().optional(),
+  exchangeRate: z.number().positive().optional(),
+  vatPercent: z.number().min(0).max(100).optional(),
+  remarks: z.string().optional(),
 });
+
+const SHIPMENT_FIELDS = {
+  companyTrn: z.string().optional(),
+  jobNo: z.string().optional(),
+  originPort: z.string().optional(),
+  destPort: z.string().optional(),
+  masterBl: z.string().optional(),
+  houseBl: z.string().optional(),
+  commodity: z.string().optional(),
+  boeNumber: z.string().optional(),
+  grossWeight: z.string().optional(),
+  volume: z.string().optional(),
+  packages: z.string().optional(),
+  shipperName: z.string().optional(),
+  consigneeName: z.string().optional(),
+  customerRef: z.string().optional(),
+  bankName: z.string().optional(),
+  bankAddress: z.string().optional(),
+  accountName: z.string().optional(),
+  accountNumber: z.string().optional(),
+  iban: z.string().optional(),
+  swiftCode: z.string().optional(),
+};
 
 const createInvoiceSchema = z.object({
   orderId: z.string().uuid().optional(),
@@ -25,14 +54,16 @@ const createInvoiceSchema = z.object({
   shipFromAddress: z.string().optional(),
   shipFromCity: z.string().optional(),
   shipFromCountry: z.string().optional(),
-  currency: z.enum(['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'INR']).default('USD'),
+  currency: z.enum(['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'INR', 'AED', 'SAR']).default('AED'),
   taxRate: z.number().min(0).max(100).default(0),
   shippingCost: z.number().min(0).default(0),
   paymentTerms: z.string().optional(),
   notes: z.string().optional(),
+  invoiceDate: z.string().optional(),
   dueDate: z.string().optional(),
   status: z.nativeEnum(InvoiceStatus).optional(),
   items: z.array(invoiceItemSchema).min(1, 'At least one line item required'),
+  ...SHIPMENT_FIELDS,
 });
 
 const updateInvoiceSchema = z.object({
@@ -45,17 +76,54 @@ const updateInvoiceSchema = z.object({
   billToPhone: z.string().optional(),
   paymentTerms: z.string().optional(),
   notes: z.string().optional(),
+  invoiceDate: z.string().optional(),
   dueDate: z.string().optional(),
   taxRate: z.number().min(0).max(100).optional(),
   shippingCost: z.number().min(0).optional(),
   items: z.array(invoiceItemSchema).min(1).optional(),
+  ...SHIPMENT_FIELDS,
 });
 
-function calcTotals(items: { quantity: number; unitPrice: number }[], taxRate: number, shippingCost: number) {
-  const subtotal = items.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0);
-  const taxAmount = Math.round(subtotal * (taxRate / 100) * 100) / 100;
-  const total = Math.round((subtotal + taxAmount + shippingCost) * 100) / 100;
-  return { subtotal: Math.round(subtotal * 100) / 100, taxAmount, total };
+type ItemInput = {
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  lineCurrency?: string;
+  exchangeRate?: number;
+  vatPercent?: number;
+  remarks?: string;
+};
+
+type EnrichedItem = ItemInput & {
+  exchangeRate: number;
+  vatPercent: number;
+  amount: number;
+  vatAmount: number;
+  totalInBase: number;
+};
+
+function round2(n: number) {
+  return Math.round(n * 100) / 100;
+}
+
+function enrichItems(items: ItemInput[]): EnrichedItem[] {
+  return items.map((it) => {
+    const ex = it.exchangeRate ?? 1;
+    const vatPct = it.vatPercent ?? 0;
+    const amount = round2(it.quantity * it.unitPrice);
+    const vatAmount = round2(amount * (vatPct / 100));
+    const totalInBase = round2((amount + vatAmount) * ex);
+    return { ...it, exchangeRate: ex, vatPercent: vatPct, amount, vatAmount, totalInBase };
+  });
+}
+
+function calcTotals(enriched: EnrichedItem[], shippingCost: number) {
+  const netInBase = enriched.reduce((s, i) => s + i.amount * i.exchangeRate, 0);
+  const vatInBase = enriched.reduce((s, i) => s + i.vatAmount * i.exchangeRate, 0);
+  const subtotal = round2(netInBase);
+  const taxAmount = round2(vatInBase);
+  const total = round2(subtotal + taxAmount + shippingCost);
+  return { subtotal, taxAmount, total };
 }
 
 export const createInvoice = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
@@ -63,52 +131,97 @@ export const createInvoice = async (req: AuthRequest, res: Response, next: NextF
     const data = createInvoiceSchema.parse(req.body);
     const isAdmin = req.user!.role === Role.ADMIN;
 
+    let linkedOrderNumber: string | null = null;
     if (data.orderId) {
       const order = await prisma.order.findFirst({
         where: { id: data.orderId, ...(isAdmin ? {} : { userId: req.user!.id }) },
+        select: { id: true, orderNumber: true },
       });
       if (!order) throw new AppError('Order not found or access denied', 404);
+      linkedOrderNumber = order.orderNumber;
     }
 
-    const { subtotal, taxAmount, total } = calcTotals(data.items, data.taxRate, data.shippingCost);
+    const enriched = enrichItems(data.items);
+    const { subtotal, taxAmount, total } = calcTotals(enriched, data.shippingCost);
+    const amountInWords = amountToWords(total, data.currency);
 
-    const invoice = await prisma.invoice.create({
-      data: {
-        invoiceNumber: generateInvoiceNumber(),
-        status: data.status ?? 'DRAFT',
-        invoiceDate: new Date(),
-        dueDate: data.dueDate ? new Date(data.dueDate) : null,
-        billToName: data.billToName,
-        billToAddress: data.billToAddress,
-        billToCity: data.billToCity,
-        billToCountry: data.billToCountry,
-        billToEmail: data.billToEmail || null,
-        billToPhone: data.billToPhone || null,
-        shipFromName: data.shipFromName ?? 'Nexora Express',
-        shipFromAddress: data.shipFromAddress ?? '1 Nexora Way',
-        shipFromCity: data.shipFromCity ?? 'London',
-        shipFromCountry: data.shipFromCountry ?? 'GB',
-        currency: data.currency,
-        taxRate: data.taxRate,
-        taxAmount,
-        shippingCost: data.shippingCost,
-        subtotal,
-        total,
-        paymentTerms: data.paymentTerms || null,
-        notes: data.notes || null,
-        orderId: data.orderId || null,
-        userId: req.user!.id,
-        items: {
-          create: data.items.map((item) => ({
-            description: item.description,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
-            amount: Math.round(item.quantity * item.unitPrice * 100) / 100,
-          })),
-        },
-      },
-      include: { items: true, orderRef: { select: { orderNumber: true } } },
-    });
+    let invoice;
+    let attempt = 0;
+    while (true) {
+      const invoiceNumber = await generateInvoiceNumber();
+      const jobNo = data.jobNo || linkedOrderNumber || deriveJobNumber(invoiceNumber);
+      try {
+        invoice = await prisma.invoice.create({
+          data: {
+            invoiceNumber,
+            status: data.status ?? 'DRAFT',
+            invoiceDate: data.invoiceDate ? new Date(data.invoiceDate) : new Date(),
+            dueDate: data.dueDate ? new Date(data.dueDate) : null,
+            billToName: data.billToName,
+            billToAddress: data.billToAddress,
+            billToCity: data.billToCity,
+            billToCountry: data.billToCountry,
+            billToEmail: data.billToEmail || null,
+            billToPhone: data.billToPhone || null,
+            shipFromName: data.shipFromName ?? 'Nexora Express',
+            shipFromAddress: data.shipFromAddress ?? '1 Nexora Way',
+            shipFromCity: data.shipFromCity ?? 'London',
+            shipFromCountry: data.shipFromCountry ?? 'GB',
+            companyTrn: data.companyTrn || null,
+            jobNo,
+            originPort: data.originPort || null,
+            destPort: data.destPort || null,
+            masterBl: data.masterBl || null,
+            houseBl: data.houseBl || null,
+            commodity: data.commodity || null,
+            boeNumber: data.boeNumber || null,
+            grossWeight: data.grossWeight || null,
+            volume: data.volume || null,
+            packages: data.packages || null,
+            shipperName: data.shipperName || null,
+            consigneeName: data.consigneeName || null,
+            customerRef: data.customerRef || `INV-${invoiceNumber}`,
+            bankName: data.bankName || null,
+            bankAddress: data.bankAddress || null,
+            accountName: data.accountName || null,
+            accountNumber: data.accountNumber || null,
+            iban: data.iban || null,
+            swiftCode: data.swiftCode || null,
+            currency: data.currency,
+            taxRate: data.taxRate,
+            taxAmount,
+            shippingCost: data.shippingCost,
+            subtotal,
+            total,
+            amountInWords,
+            paymentTerms: data.paymentTerms || null,
+            notes: data.notes || null,
+            orderId: data.orderId || null,
+            userId: req.user!.id,
+            items: {
+              create: enriched.map((it) => ({
+                description: it.description,
+                quantity: it.quantity,
+                unitPrice: it.unitPrice,
+                amount: it.amount,
+                lineCurrency: it.lineCurrency || data.currency,
+                exchangeRate: it.exchangeRate,
+                vatPercent: it.vatPercent,
+                vatAmount: it.vatAmount,
+                totalInBase: it.totalInBase,
+                remarks: it.remarks || null,
+              })),
+            },
+          },
+          include: { items: true, orderRef: { select: { orderNumber: true } } },
+        });
+        break;
+      } catch (e: unknown) {
+        const code = (e as { code?: string }).code;
+        if (code === 'P2002' && attempt < 4) { attempt += 1; continue; }
+        throw e;
+      }
+    }
 
     res.status(201).json({ success: true, message: 'Invoice created', data: invoice });
   } catch (error) {
@@ -197,14 +310,25 @@ export const updateInvoice = async (req: AuthRequest, res: Response, next: NextF
     });
     if (!invoice) throw new AppError('Invoice not found', 404);
 
-    const newItems = data.items ?? invoice.items.map((i) => ({
+    const sourceItems = data.items ?? invoice.items.map((i) => ({
       description: i.description,
       quantity: i.quantity,
       unitPrice: i.unitPrice,
+      lineCurrency: i.lineCurrency ?? invoice.currency,
+      exchangeRate: i.exchangeRate ?? 1,
+      vatPercent: i.vatPercent ?? 0,
+      remarks: i.remarks ?? undefined,
     }));
-    const newTaxRate = data.taxRate ?? invoice.taxRate;
     const newShippingCost = data.shippingCost ?? invoice.shippingCost;
-    const { subtotal, taxAmount, total } = calcTotals(newItems, newTaxRate, newShippingCost);
+    const enriched = enrichItems(sourceItems);
+    const { subtotal, taxAmount, total } = calcTotals(enriched, newShippingCost);
+    const amountInWords = amountToWords(total, invoice.currency);
+
+    const shipmentUpdate: Record<string, string | null | undefined> = {};
+    for (const k of Object.keys(SHIPMENT_FIELDS) as (keyof typeof SHIPMENT_FIELDS)[]) {
+      const val = (data as Record<string, unknown>)[k];
+      if (val !== undefined) shipmentUpdate[k] = (val as string) || null;
+    }
 
     const updated = await prisma.invoice.update({
       where: { id },
@@ -218,20 +342,29 @@ export const updateInvoice = async (req: AuthRequest, res: Response, next: NextF
         ...(data.billToPhone !== undefined ? { billToPhone: data.billToPhone || null } : {}),
         ...(data.paymentTerms !== undefined ? { paymentTerms: data.paymentTerms || null } : {}),
         ...(data.notes !== undefined ? { notes: data.notes || null } : {}),
+        ...(data.invoiceDate !== undefined ? { invoiceDate: data.invoiceDate ? new Date(data.invoiceDate) : new Date() } : {}),
         ...(data.dueDate !== undefined ? { dueDate: data.dueDate ? new Date(data.dueDate) : null } : {}),
-        taxRate: newTaxRate,
+        ...shipmentUpdate,
+        ...(data.taxRate !== undefined ? { taxRate: data.taxRate } : {}),
         shippingCost: newShippingCost,
         subtotal,
         taxAmount,
         total,
+        amountInWords,
         ...(data.items ? {
           items: {
             deleteMany: {},
-            create: data.items.map((item) => ({
-              description: item.description,
-              quantity: item.quantity,
-              unitPrice: item.unitPrice,
-              amount: Math.round(item.quantity * item.unitPrice * 100) / 100,
+            create: enriched.map((it) => ({
+              description: it.description,
+              quantity: it.quantity,
+              unitPrice: it.unitPrice,
+              amount: it.amount,
+              lineCurrency: it.lineCurrency || invoice.currency,
+              exchangeRate: it.exchangeRate,
+              vatPercent: it.vatPercent,
+              vatAmount: it.vatAmount,
+              totalInBase: it.totalInBase,
+              remarks: it.remarks || null,
             })),
           },
         } : {}),
@@ -285,6 +418,31 @@ export const downloadInvoiceWord = async (req: AuthRequest, res: Response, next:
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     res.setHeader('Content-Disposition', `attachment; filename="${invoice.invoiceNumber}.docx"`);
+    res.send(buffer);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const downloadInvoicePdf = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const isAdmin = req.user!.role === Role.ADMIN;
+
+    const invoice = await prisma.invoice.findFirst({
+      where: { id, ...(isAdmin ? {} : { userId: req.user!.id }) },
+      include: {
+        items: true,
+        orderRef: { select: { orderNumber: true } },
+      },
+    });
+
+    if (!invoice) throw new AppError('Invoice not found', 404);
+
+    const buffer = await generateInvoicePdfBuffer(invoice);
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${invoice.invoiceNumber}.pdf"`);
     res.send(buffer);
   } catch (error) {
     next(error);

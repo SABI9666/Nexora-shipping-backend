@@ -1,8 +1,33 @@
-export function generateInvoiceNumber(): string {
-  const date = new Date();
-  const year = String(date.getFullYear()).slice(2);
-  const seq = Math.floor(Math.random() * 90000) + 10000;
-  return `NEX${year}-${String(seq).padStart(5, '0')}`;
+import prisma from '../config/database';
+
+const INVOICE_PREFIX = 'NEX';
+const INVOICE_SEQ_PAD = 5;
+const JOB_PREFIX = 'NEXDX';
+
+export async function generateInvoiceNumber(): Promise<string> {
+  const yy = String(new Date().getFullYear()).slice(2);
+  const prefix = `${INVOICE_PREFIX}${yy}-`;
+
+  const last = await prisma.invoice.findFirst({
+    where: { invoiceNumber: { startsWith: prefix } },
+    orderBy: { invoiceNumber: 'desc' },
+    select: { invoiceNumber: true },
+  });
+
+  const lastSeq = last
+    ? parseInt(last.invoiceNumber.slice(prefix.length), 10) || 0
+    : 0;
+  const next = lastSeq + 1;
+  return `${prefix}${String(next).padStart(INVOICE_SEQ_PAD, '0')}`;
+}
+
+export function deriveJobNumber(invoiceNumber: string): string {
+  // Pull <yy>-<seq> off the invoice number and re-prefix with NEXDXLTR.
+  const m = /^[A-Z]+(\d{2})-(\d+)$/.exec(invoiceNumber);
+  if (m) return `${JOB_PREFIX}${m[1]}-${m[2]}`;
+  // Fallback: keep whatever year+seq we can find
+  const yy = String(new Date().getFullYear()).slice(2);
+  return `${JOB_PREFIX}${yy}-${invoiceNumber}`;
 }
 
 export function generateQuotationNumber(): string {
@@ -12,11 +37,24 @@ export function generateQuotationNumber(): string {
   return `QT${year}-${String(seq).padStart(5, '0')}`;
 }
 
-export function generateOrderNumber(): string {
-  const date = new Date();
-  const year = date.getFullYear();
-  const random = Math.floor(Math.random() * 900000) + 100000;
-  return `NEX-${year}-${random}`;
+const ORDER_PREFIX = 'NEXDX';
+const ORDER_SEQ_PAD = 5;
+
+export async function generateOrderNumber(): Promise<string> {
+  const year = new Date().getFullYear();
+  const prefix = `${ORDER_PREFIX}-${year}-`;
+
+  const last = await prisma.order.findFirst({
+    where: { orderNumber: { startsWith: prefix } },
+    orderBy: { orderNumber: 'desc' },
+    select: { orderNumber: true },
+  });
+
+  const lastSeq = last
+    ? parseInt(last.orderNumber.slice(prefix.length), 10) || 0
+    : 0;
+  const next = lastSeq + 1;
+  return `${prefix}${String(next).padStart(ORDER_SEQ_PAD, '0')}`;
 }
 
 export function generateTrackingNumber(): string {

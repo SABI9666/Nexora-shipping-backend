@@ -31,6 +31,8 @@ const createSchema = z.object({
   acMobileNo: z.string().optional(),
   rep: z.string().optional(),
   rep2: z.string().optional(),
+  repId: z.string().uuid().optional().or(z.literal('')),
+  rep2Id: z.string().uuid().optional().or(z.literal('')),
   opBalance: z.number().default(0),
   opBalanceType: z.enum(['Credit', 'Debit']).default('Credit'),
   narration: z.string().optional(),
@@ -49,6 +51,8 @@ const updateSchema = createSchema.partial();
 const include = {
   accountGroup: { select: { id: true, code: true, name: true, groupType: true } },
   customerGroup: { select: { id: true, code: true, name: true } },
+  salesperson: { select: { id: true, code: true, name: true, phone: true, email: true } },
+  salesperson2: { select: { id: true, code: true, name: true, phone: true, email: true } },
   subAccounts: true,
 };
 
@@ -62,6 +66,8 @@ export const createAccount = async (req: AuthRequest, res: Response, next: NextF
         ...accountData,
         email: accountData.email || null,
         financeEmail: accountData.financeEmail || null,
+        repId: accountData.repId || null,
+        rep2Id: accountData.rep2Id || null,
         ...(subAccounts && subAccounts.length > 0
           ? { subAccounts: { create: subAccounts } }
           : {}),
@@ -157,6 +163,8 @@ export const updateAccount = async (req: AuthRequest, res: Response, next: NextF
         ...accountData,
         ...(accountData.email !== undefined ? { email: accountData.email || null } : {}),
         ...(accountData.financeEmail !== undefined ? { financeEmail: accountData.financeEmail || null } : {}),
+        ...(accountData.repId !== undefined ? { repId: accountData.repId || null } : {}),
+        ...(accountData.rep2Id !== undefined ? { rep2Id: accountData.rep2Id || null } : {}),
         ...(subAccounts
           ? {
               subAccounts: {
