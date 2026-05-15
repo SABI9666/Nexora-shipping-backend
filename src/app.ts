@@ -28,6 +28,7 @@ import { errorHandler } from './middleware/errorHandler';
 import { ensureStandardAccountGroups } from './utils/bootstrapAccountGroups';
 import { ensureStandardChargeItems } from './utils/bootstrapChargeItems';
 import { ensureSeedBankAccounts } from './utils/bootstrapBankAccounts';
+import { migrateLegacyCountryCodes } from './utils/migrateLegacyCountryCodes';
 
 const app = express();
 
@@ -133,6 +134,7 @@ app.listen(PORT, '0.0.0.0', () => {
   ensureStandardAccountGroups();
   ensureStandardChargeItems();
   ensureSeedBankAccounts();
+  migrateLegacyCountryCodes();
 });
 
 export default app;
