@@ -195,7 +195,7 @@ model Document {
   size         Int
   url          String
   gcsPath      String
-  type         String   // invoice, bill_of_lading, customs, proof_of_delivery, other
+  type         String
   orderId      String?
   shipmentId   String?
   uploadedBy   String
@@ -497,6 +497,8 @@ model BankAccount {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  vouchers Voucher[]
+
   @@map("bank_accounts")
 }
 
@@ -513,11 +515,10 @@ model Voucher {
   orderId         String?
   accountId       String?
   contraAccountId String?
+  bankAccountId   String?
   partyName       String?
   narration       String?
 
-  // Payment method + cheque details (used mainly by SUPPLIER_PAYMENT /
-  // PURCHASE / PAYMENT / RECEIPT vouchers).
   paymentMethod   VoucherPaymentMethod?
   chequeNumber    String?
   chequeDate      DateTime?
@@ -526,10 +527,9 @@ model Voucher {
   accountPayee    Boolean              @default(false)
   printCheque     Boolean              @default(false)
   collectedRepId  String?
-  againstType     String?              // "Bill" | "Advance" | "Journal" | ...
-  issuedTo        String?              // free-text override of the party
+  againstType     String?
+  issuedTo        String?
 
-  // Attachment (existing fields, kept for back-compat)
   fileUrl         String?
   fileName        String?
   fileMimeType    String?
@@ -544,6 +544,7 @@ model Voucher {
   order         Order?       @relation(fields: [orderId], references: [id])
   account       Account?     @relation("VoucherPartyAccount", fields: [accountId], references: [id])
   contraAccount Account?     @relation("VoucherContraAccount", fields: [contraAccountId], references: [id])
+  bankAccount   BankAccount? @relation(fields: [bankAccountId], references: [id])
   collectedRep  Salesperson? @relation("VoucherCollectedRep", fields: [collectedRepId], references: [id])
   allocations   VoucherAllocation[]
 
@@ -551,6 +552,7 @@ model Voucher {
   @@index([orderId])
   @@index([accountId])
   @@index([contraAccountId])
+  @@index([bankAccountId])
   @@map("vouchers")
 }
 
