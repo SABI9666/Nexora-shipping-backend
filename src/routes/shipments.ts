@@ -4,7 +4,9 @@ import {
   trackShipment,
   getShipments,
   getShipment,
+  updateShipment,
   updateShipmentStatus,
+  deleteShipment,
   getShipmentStats,
 } from '../controllers/shipmentController';
 
@@ -19,5 +21,7 @@ router.get('/stats', getShipmentStats);
 router.get('/', getShipments);
 router.get('/:id', getShipment);
 router.patch('/:id/status', authorize('ADMIN', 'DRIVER'), updateShipmentStatus);
+router.patch('/:id', authorize('ADMIN'), updateShipment);
+router.delete('/:id', authorize('ADMIN'), deleteShipment);
 
 export default router;
