@@ -13,6 +13,17 @@ const addEventSchema = z.object({
   timestamp: z.string().datetime().optional(),
 });
 
+const updateShipmentSchema = z.object({
+  origin: z.string().min(1).optional(),
+  destination: z.string().min(1).optional(),
+  currentLocation: z.string().optional().nullable(),
+  weight: z.number().positive().optional(),
+  description: z.string().optional().nullable(),
+  carrier: z.string().optional().nullable(),
+  estimatedDelivery: z.string().datetime().optional().nullable().or(z.literal('')),
+  actualDelivery: z.string().datetime().optional().nullable().or(z.literal('')),
+});
+
 // Public: Track by tracking number (no auth required)
 export const trackShipment = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
@@ -111,7 +122,80 @@ export const getShipment = async (req: AuthRequest, res: Response, next: NextFun
   }
 };
 
-// Admin only: Update shipment status and add event
+// Edit shipment metadata (origin / destination / weight / carrier / dates).
+// Status changes still go through updateShipmentStatus so they create an event.
+export const updateShipment = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const data = updateShipmentSchema.parse(req.body);
+
+    const existing = await prisma.shipment.findUnique({ where: { id } });
+    if (!existing) throw new AppError('Shipment not found', 404);
+
+    const updateData: {
+      origin?: string;
+      destination?: string;
+      currentLocation?: string | null;
+      weight?: number;
+      description?: string | null;
+      carrier?: string | null;
+      estimatedDelivery?: Date | null;
+      actualDelivery?: Date | null;
+    } = {};
+
+    if (data.origin !== undefined) updateData.origin = data.origin;
+    if (data.destination !== undefined) updateData.destination = data.destination;
+    if (data.currentLocation !== undefined) updateData.currentLocation = data.currentLocation || null;
+    if (data.weight !== undefined) updateData.weight = data.weight;
+    if (data.description !== undefined) updateData.description = data.description || null;
+    if (data.carrier !== undefined) updateData.carrier = data.carrier || null;
+    if (data.estimatedDelivery !== undefined) {
+      updateData.estimatedDelivery = data.estimatedDelivery ? new Date(data.estimatedDelivery) : null;
+    }
+    if (data.actualDelivery !== undefined) {
+      updateData.actualDelivery = data.actualDelivery ? new Date(data.actualDelivery) : null;
+    }
+
+    const updated = await prisma.shipment.update({
+      where: { id },
+      data: updateData,
+      include: {
+        events: { orderBy: { timestamp: 'desc' } },
+        order: { select: { orderNumber: true } },
+      },
+    });
+
+    res.json({ success: true, message: 'Shipment updated', data: updated });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ success: false, message: error.errors[0].message });
+      return;
+    }
+    next(error);
+  }
+};
+
+export const deleteShipment = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const shipment = await prisma.shipment.findUnique({ where: { id } });
+    if (!shipment) throw new AppError('Shipment not found', 404);
+
+    // Documents reference the shipment without cascade — detach them so the
+    // file records survive even after the shipment is removed.
+    await prisma.$transaction([
+      prisma.document.updateMany({ where: { shipmentId: id }, data: { shipmentId: null } }),
+      prisma.shipment.delete({ where: { id } }),
+    ]);
+
+    res.json({ success: true, message: 'Shipment deleted' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Admin / Driver only: Update shipment status and add event
 export const updateShipmentStatus = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
@@ -121,7 +205,7 @@ export const updateShipmentStatus = async (req: AuthRequest, res: Response, next
     if (!shipment) throw new AppError('Shipment not found', 404);
 
     const updatedShipment = await prisma.$transaction(async (tx) => {
-      const event = await tx.shipmentEvent.create({
+      await tx.shipmentEvent.create({
         data: {
           shipmentId: id,
           status: data.status,
@@ -138,7 +222,6 @@ export const updateShipmentStatus = async (req: AuthRequest, res: Response, next
 
       if (data.status === ShipmentStatus.DELIVERED) {
         updateData.actualDelivery = new Date();
-        // Also update order status
         if (shipment.orderId) {
           await tx.order.update({
             where: { id: shipment.orderId },
