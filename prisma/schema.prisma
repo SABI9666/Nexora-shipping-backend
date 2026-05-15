@@ -83,6 +83,13 @@ enum VoucherReferenceType {
   ORDER
 }
 
+enum VoucherPaymentMethod {
+  CASH
+  CHEQUE
+  BANK_TRANSFER
+  CONTRA
+}
+
 model User {
   id           String   @id @default(uuid())
   email        String   @unique
@@ -208,7 +215,6 @@ model Invoice {
   invoiceDate   DateTime      @default(now())
   dueDate       DateTime?
 
-  // Bill To (free text, kept for legacy)
   billToName    String
   billToAddress String
   billToCity    String
@@ -216,16 +222,13 @@ model Invoice {
   billToEmail   String?
   billToPhone   String?
 
-  // Ship From (company)
   shipFromName    String @default("Nexora Express")
   shipFromAddress String @default("1 Nexora Way")
   shipFromCity    String @default("London")
   shipFromCountry String @default("GB")
 
-  // Issuer / company
   companyTrn   String?
 
-  // Shipment header
   jobNo          String?
   originPort     String?
   destPort       String?
@@ -240,7 +243,6 @@ model Invoice {
   consigneeName  String?
   customerRef    String?
 
-  // Financial
   currency     String @default("AED")
   subtotal     Float  @default(0)
   taxRate      Float  @default(0)
@@ -249,7 +251,6 @@ model Invoice {
   total        Float  @default(0)
   amountInWords String?
 
-  // Bank details
   bankName      String?
   bankAddress   String?
   accountName   String?
@@ -257,22 +258,21 @@ model Invoice {
   iban          String?
   swiftCode     String?
 
-  // Meta
   paymentTerms String?
   notes        String?
 
-  // Relations
   orderId   String?
   accountId String?
   userId    String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user     User          @relation(fields: [userId], references: [id])
-  orderRef Order?        @relation(fields: [orderId], references: [id])
-  account  Account?      @relation("InvoiceAccount", fields: [accountId], references: [id])
-  items    InvoiceItem[]
-  vouchers Voucher[]
+  user                User                @relation(fields: [userId], references: [id])
+  orderRef            Order?              @relation(fields: [orderId], references: [id])
+  account             Account?            @relation("InvoiceAccount", fields: [accountId], references: [id])
+  items               InvoiceItem[]
+  vouchers            Voucher[]
+  voucherAllocations  VoucherAllocation[] @relation("InvoiceVoucherAllocation")
 
   @@index([accountId])
   @@map("invoices")
@@ -304,7 +304,6 @@ model Quotation {
   quotationDate   DateTime        @default(now())
   validUntil      DateTime?
 
-  // Bill To / Client
   billToName    String
   billToAddress String
   billToCity    String
@@ -312,13 +311,11 @@ model Quotation {
   billToEmail   String?
   billToPhone   String?
 
-  // Ship From (company)
   shipFromName    String @default("Nexora Express")
   shipFromAddress String @default("1 Nexora Way")
   shipFromCity    String @default("London")
   shipFromCountry String @default("GB")
 
-  // Financial
   currency     String @default("USD")
   subtotal     Float  @default(0)
   taxRate      Float  @default(0)
@@ -326,11 +323,9 @@ model Quotation {
   shippingCost Float  @default(0)
   total        Float  @default(0)
 
-  // Meta
   terms String?
   notes String?
 
-  // Relations
   orderId   String?
   userId    String
   createdAt DateTime @default(now())
@@ -393,9 +388,10 @@ model Salesperson {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  primaryAccounts   Account[] @relation("AccountPrimarySalesperson")
-  secondaryAccounts Account[] @relation("AccountSecondarySalesperson")
-  orders            Order[]   @relation("OrderSalesperson")
+  primaryAccounts    Account[] @relation("AccountPrimarySalesperson")
+  secondaryAccounts  Account[] @relation("AccountSecondarySalesperson")
+  orders             Order[]   @relation("OrderSalesperson")
+  voucherCollections Voucher[] @relation("VoucherCollectedRep")
 
   @@map("salespersons")
 }
@@ -519,6 +515,21 @@ model Voucher {
   contraAccountId String?
   partyName       String?
   narration       String?
+
+  // Payment method + cheque details (used mainly by SUPPLIER_PAYMENT /
+  // PURCHASE / PAYMENT / RECEIPT vouchers).
+  paymentMethod   VoucherPaymentMethod?
+  chequeNumber    String?
+  chequeDate      DateTime?
+  presentOn       DateTime?
+  clearedOn       DateTime?
+  accountPayee    Boolean              @default(false)
+  printCheque     Boolean              @default(false)
+  collectedRepId  String?
+  againstType     String?              // "Bill" | "Advance" | "Journal" | ...
+  issuedTo        String?              // free-text override of the party
+
+  // Attachment (existing fields, kept for back-compat)
   fileUrl         String?
   fileName        String?
   fileMimeType    String?
@@ -528,15 +539,39 @@ model Voucher {
   createdAt       DateTime             @default(now())
   updatedAt       DateTime             @updatedAt
 
-  user          User     @relation(fields: [userId], references: [id])
-  invoice       Invoice? @relation(fields: [invoiceId], references: [id])
-  order         Order?   @relation(fields: [orderId], references: [id])
-  account       Account? @relation("VoucherPartyAccount", fields: [accountId], references: [id])
-  contraAccount Account? @relation("VoucherContraAccount", fields: [contraAccountId], references: [id])
+  user          User         @relation(fields: [userId], references: [id])
+  invoice       Invoice?     @relation(fields: [invoiceId], references: [id])
+  order         Order?       @relation(fields: [orderId], references: [id])
+  account       Account?     @relation("VoucherPartyAccount", fields: [accountId], references: [id])
+  contraAccount Account?     @relation("VoucherContraAccount", fields: [contraAccountId], references: [id])
+  collectedRep  Salesperson? @relation("VoucherCollectedRep", fields: [collectedRepId], references: [id])
+  allocations   VoucherAllocation[]
 
   @@index([invoiceId])
   @@index([orderId])
   @@index([accountId])
   @@index([contraAccountId])
   @@map("vouchers")
+}
+
+model VoucherAllocation {
+  id              String   @id @default(uuid())
+  voucherId       String
+  invoiceId       String?
+  jobNo           String?
+  refNo           String?
+  invoiceNumber   String?
+  invoiceDate     DateTime?
+  billAmount      Float    @default(0)
+  allocatedAmount Float    @default(0)
+  balanceAfter    Float    @default(0)
+  remarks         String?
+  createdAt       DateTime @default(now())
+
+  voucher Voucher  @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+  invoice Invoice? @relation("InvoiceVoucherAllocation", fields: [invoiceId], references: [id])
+
+  @@index([voucherId])
+  @@index([invoiceId])
+  @@map("voucher_allocations")
 }

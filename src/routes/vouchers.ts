@@ -7,6 +7,7 @@ import {
   getVoucher,
   deleteVoucher,
   getReferenceValue,
+  getOpenBills,
   downloadVoucherPdf,
 } from '../controllers/voucherController';
 
@@ -15,6 +16,7 @@ const router = Router();
 router.use(authenticate);
 
 router.get('/reference', getReferenceValue);
+router.get('/open-bills', getOpenBills);
 router.get('/', getVouchers);
 router.post('/', upload.single('file'), createVoucher);
 router.get('/:id/download/pdf', downloadVoucherPdf);
