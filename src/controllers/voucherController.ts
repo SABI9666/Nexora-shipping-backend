@@ -2,7 +2,7 @@ import { Response, NextFunction } from 'express';
 import { z } from 'zod';
 import {
   VoucherType, VoucherDirection, VoucherReferenceType,
-  VoucherPaymentMethod, Role,
+  VoucherPaymentMethod, InvoiceStatus, Role,
 } from '@prisma/client';
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
@@ -48,6 +48,7 @@ const createSchema = z.object({
   orderId: z.string().uuid().optional().or(z.literal('')),
   accountId: z.string().uuid().optional().or(z.literal('')),
   contraAccountId: z.string().uuid().optional().or(z.literal('')),
+  bankAccountId: z.string().uuid().optional().or(z.literal('')),
   collectedRepId: z.string().uuid().optional().or(z.literal('')),
   partyName: z.string().optional(),
   issuedTo: z.string().optional(),
@@ -92,6 +93,7 @@ const VOUCHER_INCLUDE = {
   order: { select: { id: true, orderNumber: true, price: true } },
   account: { include: ACCOUNT_INCLUDE },
   contraAccount: { include: ACCOUNT_INCLUDE },
+  bankAccount: { select: { id: true, label: true, bankName: true, accountName: true, accountNumber: true, iban: true, swiftCode: true, currency: true } },
   collectedRep: { select: { id: true, code: true, name: true, phone: true, email: true } },
   allocations: { orderBy: { createdAt: 'asc' as const } },
   user: { select: { firstName: true, lastName: true, email: true } },
@@ -103,11 +105,43 @@ function parseDate(s?: string): Date | null {
   return isNaN(d.getTime()) ? null : d;
 }
 
+// Recompute & update invoice statuses for a set of invoice IDs.
+// Marks an invoice PAID once total credits + allocations cover its total.
+// Flips back to SENT if a payment was later removed.
+async function reconcileInvoiceStatuses(invoiceIds: string[]): Promise<void> {
+  const unique = Array.from(new Set(invoiceIds.filter(Boolean)));
+  for (const id of unique) {
+    const invoice = await prisma.invoice.findUnique({
+      where: { id },
+      select: {
+        id: true, total: true, status: true,
+        vouchers: { select: { amount: true, direction: true } },
+        voucherAllocations: { select: { allocatedAmount: true } },
+      },
+    });
+    if (!invoice) continue;
+
+    const credit = invoice.vouchers
+      .filter((v) => v.direction === VoucherDirection.CREDIT)
+      .reduce((s, v) => s + v.amount, 0);
+    const allocated = invoice.voucherAllocations.reduce((s, a) => s + a.allocatedAmount, 0);
+    const totalPaid = credit + allocated;
+
+    const isFullyPaid = totalPaid + 0.005 >= invoice.total;
+    const wasPaid = invoice.status === InvoiceStatus.PAID;
+
+    if (isFullyPaid && !wasPaid && invoice.status !== InvoiceStatus.CANCELLED) {
+      await prisma.invoice.update({ where: { id }, data: { status: InvoiceStatus.PAID } });
+    } else if (!isFullyPaid && wasPaid) {
+      await prisma.invoice.update({ where: { id }, data: { status: InvoiceStatus.SENT } });
+    }
+  }
+}
+
 export const createVoucher = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
-    // Multipart bodies pass `allocations` as a JSON string — unwrap before zod.
     if (typeof req.body.allocations === 'string') {
-      try { req.body.allocations = JSON.parse(req.body.allocations); } catch { /* leave as-is to fail validation */ }
+      try { req.body.allocations = JSON.parse(req.body.allocations); } catch { /* leave to fail validation */ }
     }
     const parsed = createSchema.parse(req.body);
     const direction = parsed.direction ?? DEFAULT_DIRECTION[parsed.type];
@@ -117,6 +151,7 @@ export const createVoucher = async (req: AuthRequest, res: Response, next: NextF
     let orderId: string | null = parsed.orderId || null;
     const accountId: string | null = parsed.accountId || null;
     const contraAccountId: string | null = parsed.contraAccountId || null;
+    const bankAccountId: string | null = parsed.bankAccountId || null;
     const collectedRepId: string | null = parsed.collectedRepId || null;
 
     if (parsed.referenceType === VoucherReferenceType.INVOICE) {
@@ -146,6 +181,10 @@ export const createVoucher = async (req: AuthRequest, res: Response, next: NextF
       const acc = await prisma.account.findUnique({ where: { id: contraAccountId } });
       if (!acc) throw new AppError('Contra account not found', 404);
     }
+    if (bankAccountId) {
+      const bank = await prisma.bankAccount.findUnique({ where: { id: bankAccountId } });
+      if (!bank) throw new AppError('Bank account not found', 404);
+    }
     if (collectedRepId) {
       const rep = await prisma.salesperson.findUnique({ where: { id: collectedRepId } });
       if (!rep) throw new AppError('Collected rep not found', 404);
@@ -166,16 +205,12 @@ export const createVoucher = async (req: AuthRequest, res: Response, next: NextF
       fileMeta.gcsPath = gcsPath;
     }
 
-    // Pre-build allocation rows. Running balance per row.
     const allocations = (parsed.allocations ?? []).filter((a) =>
       a.allocatedAmount !== 0 || a.billAmount !== 0,
     );
-    let runningBill = 0;
     let runningRecd = 0;
     const allocationRows = allocations.map((a) => {
-      runningBill += a.billAmount;
       runningRecd += a.allocatedAmount;
-      const balanceAfter = a.billAmount - a.allocatedAmount;
       return {
         invoiceId: a.invoiceId || null,
         jobNo: a.jobNo || null,
@@ -184,14 +219,12 @@ export const createVoucher = async (req: AuthRequest, res: Response, next: NextF
         invoiceDate: parseDate(a.invoiceDate),
         billAmount: a.billAmount,
         allocatedAmount: a.allocatedAmount,
-        balanceAfter,
+        balanceAfter: a.billAmount - a.allocatedAmount,
         remarks: a.remarks || null,
       };
     });
 
-    // If user supplied allocations but no amount, derive amount = sum of allocatedAmount.
     const finalAmount = parsed.amount || runningRecd;
-    void runningBill;
 
     let voucher;
     let attempt = 0;
@@ -211,6 +244,7 @@ export const createVoucher = async (req: AuthRequest, res: Response, next: NextF
             orderId,
             accountId,
             contraAccountId,
+            bankAccountId,
             collectedRepId,
             partyName: parsed.partyName || null,
             issuedTo: parsed.issuedTo || null,
@@ -229,9 +263,7 @@ export const createVoucher = async (req: AuthRequest, res: Response, next: NextF
             fileSize: fileMeta.fileSize ?? null,
             gcsPath: fileMeta.gcsPath ?? null,
             userId: req.user!.id,
-            ...(allocationRows.length
-              ? { allocations: { create: allocationRows } }
-              : {}),
+            ...(allocationRows.length ? { allocations: { create: allocationRows } } : {}),
           },
           include: VOUCHER_INCLUDE,
         });
@@ -241,6 +273,13 @@ export const createVoucher = async (req: AuthRequest, res: Response, next: NextF
         if (code === 'P2002' && attempt < 4) { attempt += 1; continue; }
         throw e;
       }
+    }
+
+    const invoiceIdsToReconcile: string[] = [];
+    if (voucher.invoiceId) invoiceIdsToReconcile.push(voucher.invoiceId);
+    allocationRows.forEach((a) => { if (a.invoiceId) invoiceIdsToReconcile.push(a.invoiceId); });
+    if (invoiceIdsToReconcile.length > 0) {
+      await reconcileInvoiceStatuses(invoiceIdsToReconcile);
     }
 
     res.status(201).json({ success: true, message: 'Voucher created', data: voucher });
@@ -283,9 +322,7 @@ export const getVouchers = async (req: AuthRequest, res: Response, next: NextFun
     const skip = (page - 1) * limit;
     const [vouchers, total] = await prisma.$transaction([
       prisma.voucher.findMany({
-        where,
-        skip,
-        take: limit,
+        where, skip, take: limit,
         orderBy: { voucherDate: 'desc' },
         include: VOUCHER_INCLUDE,
       }),
@@ -321,6 +358,7 @@ export const deleteVoucher = async (req: AuthRequest, res: Response, next: NextF
     const isAdmin = req.user!.role === Role.ADMIN;
     const voucher = await prisma.voucher.findFirst({
       where: { id: req.params.id, ...(isAdmin ? {} : { userId: req.user!.id }) },
+      include: { allocations: { select: { invoiceId: true } } },
     });
     if (!voucher) throw new AppError('Voucher not found', 404);
 
@@ -328,7 +366,16 @@ export const deleteVoucher = async (req: AuthRequest, res: Response, next: NextF
       try { await deleteFileFromGCS(voucher.gcsPath); } catch { /* ignore */ }
     }
 
+    const invoiceIds: string[] = [];
+    if (voucher.invoiceId) invoiceIds.push(voucher.invoiceId);
+    voucher.allocations.forEach((a) => { if (a.invoiceId) invoiceIds.push(a.invoiceId); });
+
     await prisma.voucher.delete({ where: { id: voucher.id } });
+
+    if (invoiceIds.length > 0) {
+      await reconcileInvoiceStatuses(invoiceIds);
+    }
+
     res.json({ success: true, message: 'Voucher deleted' });
   } catch (error) {
     next(error);
@@ -359,15 +406,20 @@ export const getReferenceValue = async (req: AuthRequest, res: Response, next: N
         where: { invoiceId: id },
         select: { amount: true, direction: true },
       });
+      const allocations = await prisma.voucherAllocation.findMany({
+        where: { invoiceId: id },
+        select: { allocatedAmount: true },
+      });
       const { credit, debit } = sumByDirection(vouchers);
-      const outstanding = invoice.total + debit - credit;
+      const allocated = allocations.reduce((s, a) => s + a.allocatedAmount, 0);
+      const outstanding = invoice.total + debit - credit - allocated;
 
       res.json({
         success: true,
         data: {
           reference: { type: 'INVOICE', id: invoice.id, number: invoice.invoiceNumber, party: invoice.billToName, status: invoice.status },
           baseValue: invoice.total,
-          creditTotal: credit,
+          creditTotal: credit + allocated,
           debitTotal: debit,
           outstanding,
           currency: invoice.currency,
@@ -407,12 +459,6 @@ export const getReferenceValue = async (req: AuthRequest, res: Response, next: N
   }
 };
 
-// =====================================================================
-// OPEN BILLS — list invoices for a party with their outstanding balance.
-// Used by the Supplier Payment Voucher modal to populate the allocation
-// table. Matches by accountId AND legacy billToName so historical rows
-// still surface.
-// =====================================================================
 export const getOpenBills = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const accountId = req.query.accountId as string | undefined;
@@ -476,18 +522,21 @@ export const downloadVoucherPdf = async (req: AuthRequest, res: Response, next: 
     });
     if (!v) throw new AppError('Voucher not found', 404);
 
-    const bank = await prisma.bankAccount.findFirst({
+    const defaultBank = await prisma.bankAccount.findFirst({
       where: { isDefault: true },
       select: { companyTrn: true },
     });
 
-    // Route supplier-payment + purchase vouchers to the dedicated layout
-    // (matches the legacy form). Everything else uses the generic
-    // voucher PDF.
     const isSupplierPayment =
       v.type === VoucherType.SUPPLIER_PAYMENT ||
       v.type === VoucherType.PURCHASE ||
       v.type === VoucherType.PAYMENT;
+
+    const acDisplay = v.bankAccount
+      ? { code: v.bankAccount.label || v.bankAccount.bankName, name: `${v.bankAccount.bankName} · ${v.bankAccount.accountNumber}` }
+      : v.contraAccount
+      ? { code: v.contraAccount.code, name: v.contraAccount.name }
+      : null;
 
     let buffer: Buffer;
     if (isSupplierPayment && (v.allocations.length > 0 || v.paymentMethod || v.chequeNumber)) {
@@ -513,7 +562,7 @@ export const downloadVoucherPdf = async (req: AuthRequest, res: Response, next: 
           trn: v.account.trn || null,
           email: v.account.email || null,
         } : null,
-        contraAccount: v.contraAccount ? { code: v.contraAccount.code, name: v.contraAccount.name } : null,
+        contraAccount: acDisplay,
         collectedRep: v.collectedRep ? { code: v.collectedRep.code, name: v.collectedRep.name } : null,
         allocations: v.allocations.map((a) => ({
           jobNo: a.jobNo, refNo: a.refNo, invoiceNumber: a.invoiceNumber,
@@ -521,19 +570,14 @@ export const downloadVoucherPdf = async (req: AuthRequest, res: Response, next: 
           allocatedAmount: a.allocatedAmount, balanceAfter: a.balanceAfter,
           remarks: a.remarks,
         })),
-        companyTrn: bank?.companyTrn || undefined,
+        companyTrn: defaultBank?.companyTrn || undefined,
       });
     } else {
       buffer = await generateVoucherPdfBuffer({
         voucherNumber: v.voucherNumber,
-        type: v.type,
-        direction: v.direction,
-        voucherDate: v.voucherDate,
-        amount: v.amount,
-        currency: v.currency,
-        referenceType: v.referenceType,
-        partyName: v.partyName,
-        narration: v.narration,
+        type: v.type, direction: v.direction, voucherDate: v.voucherDate,
+        amount: v.amount, currency: v.currency, referenceType: v.referenceType,
+        partyName: v.partyName, narration: v.narration,
         account: v.account ? {
           code: v.account.code, name: v.account.name,
           address: v.account.address || v.account.deliveryAddress || null,
@@ -550,7 +594,7 @@ export const downloadVoucherPdf = async (req: AuthRequest, res: Response, next: 
         } : null,
         order: v.order ? { orderNumber: v.order.orderNumber, price: v.order.price } : null,
         user: v.user ? { firstName: v.user.firstName, lastName: v.user.lastName, email: v.user.email } : null,
-        companyTrn: bank?.companyTrn || undefined,
+        companyTrn: defaultBank?.companyTrn || undefined,
       });
     }
 
