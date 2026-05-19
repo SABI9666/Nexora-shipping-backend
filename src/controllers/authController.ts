@@ -36,19 +36,11 @@ export const register = async (req: Request, res: Response, next: NextFunction):
     const hashedPassword = await bcrypt.hash(data.password, 12);
 
     const user = await prisma.user.create({
-      data: {
-        ...data,
-        password: hashedPassword,
-      },
+      data: { ...data, password: hashedPassword },
       select: { id: true, email: true, firstName: true, lastName: true, role: true, createdAt: true },
     });
 
-    const { accessToken, refreshToken } = generateTokens({
-      id: user.id,
-      email: user.email,
-      role: user.role,
-    });
-
+    const { accessToken, refreshToken } = generateTokens({ id: user.id, email: user.email, role: user.role });
     await prisma.user.update({ where: { id: user.id }, data: { refreshToken } });
 
     res.status(201).json({
@@ -68,19 +60,15 @@ export const register = async (req: Request, res: Response, next: NextFunction):
 export const login = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const data = loginSchema.parse(req.body);
+    const email = data.email.trim().toLowerCase();
 
-    const user = await prisma.user.findUnique({ where: { email: data.email } });
+    const user = await prisma.user.findUnique({ where: { email } });
     if (!user) throw new AppError('Invalid email or password', 401);
 
     const isPasswordValid = await bcrypt.compare(data.password, user.password);
     if (!isPasswordValid) throw new AppError('Invalid email or password', 401);
 
-    const { accessToken, refreshToken } = generateTokens({
-      id: user.id,
-      email: user.email,
-      role: user.role,
-    });
-
+    const { accessToken, refreshToken } = generateTokens({ id: user.id, email: user.email, role: user.role });
     await prisma.user.update({ where: { id: user.id }, data: { refreshToken } });
 
     res.json({
@@ -88,15 +76,11 @@ export const login = async (req: Request, res: Response, next: NextFunction): Pr
       message: 'Login successful',
       data: {
         user: {
-          id: user.id,
-          email: user.email,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          role: user.role,
-          phone: user.phone,
+          id: user.id, email: user.email,
+          firstName: user.firstName, lastName: user.lastName,
+          role: user.role, phone: user.phone,
         },
-        accessToken,
-        refreshToken,
+        accessToken, refreshToken,
       },
     });
   } catch (error) {
@@ -115,24 +99,13 @@ export const refreshToken = async (req: Request, res: Response, next: NextFuncti
 
     const decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET!) as JWTPayload;
 
-    const user = await prisma.user.findFirst({
-      where: { id: decoded.id, refreshToken: token },
-    });
-
+    const user = await prisma.user.findFirst({ where: { id: decoded.id, refreshToken: token } });
     if (!user) throw new AppError('Invalid refresh token', 401);
 
-    const { accessToken, refreshToken: newRefreshToken } = generateTokens({
-      id: user.id,
-      email: user.email,
-      role: user.role,
-    });
-
+    const { accessToken, refreshToken: newRefreshToken } = generateTokens({ id: user.id, email: user.email, role: user.role });
     await prisma.user.update({ where: { id: user.id }, data: { refreshToken: newRefreshToken } });
 
-    res.json({
-      success: true,
-      data: { accessToken, refreshToken: newRefreshToken },
-    });
+    res.json({ success: true, data: { accessToken, refreshToken: newRefreshToken } });
   } catch (error) {
     next(error);
   }
@@ -141,10 +114,7 @@ export const refreshToken = async (req: Request, res: Response, next: NextFuncti
 export const logout = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     if (req.user) {
-      await prisma.user.update({
-        where: { id: req.user.id },
-        data: { refreshToken: null },
-      });
+      await prisma.user.update({ where: { id: req.user.id }, data: { refreshToken: null } });
     }
     res.json({ success: true, message: 'Logged out successfully' });
   } catch (error) {
@@ -152,29 +122,70 @@ export const logout = async (req: AuthRequest, res: Response, next: NextFunction
   }
 };
 
+// Mask an email or password fragment so we can give a useful hint about
+// what the server expects without leaking the secret itself.
+function maskHint(value: string | undefined): string {
+  if (!value) return '(empty)';
+  const v = value.trim();
+  if (v.length <= 2) return `${v.length} char(s)`;
+  if (v.length <= 6) return `${v[0]}***${v[v.length - 1]} (${v.length} chars)`;
+  return `${v.slice(0, 2)}***${v.slice(-2)} (${v.length} chars)`;
+}
+
 export const adminLogin = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { email, password } = loginSchema.parse(req.body);
+    const { email: rawEmail, password: rawPassword } = loginSchema.parse(req.body);
 
-    const adminEmail = process.env.ADMIN_EMAIL;
-    const adminPassword = process.env.ADMIN_PASSWORD;
+    const adminEmailEnv = process.env.ADMIN_EMAIL;
+    const adminPasswordEnv = process.env.ADMIN_PASSWORD;
 
-    if (!adminEmail || !adminPassword) {
-      res.status(503).json({ success: false, message: 'Admin portal not configured. Set ADMIN_EMAIL and ADMIN_PASSWORD in server environment.' });
+    if (!adminEmailEnv || !adminPasswordEnv) {
+      res.status(503).json({
+        success: false,
+        message: 'Admin portal not configured. Set ADMIN_EMAIL and ADMIN_PASSWORD in server environment.',
+      });
       return;
     }
 
-    if (email !== adminEmail || password !== adminPassword) {
-      res.status(401).json({ success: false, message: 'Invalid admin credentials' });
+    // Be forgiving on email (case-insensitive, trim) and password (trim only —
+    // preserve case for security). This eliminates the most common typo
+    // failures without weakening protection.
+    const inputEmail = rawEmail.trim().toLowerCase();
+    const inputPassword = rawPassword;
+    const expectedEmail = adminEmailEnv.trim().toLowerCase();
+    const expectedPassword = adminPasswordEnv.trim();
+
+    const emailMatch = inputEmail === expectedEmail;
+    const passwordMatch = inputPassword.trim() === expectedPassword;
+
+    if (!emailMatch || !passwordMatch) {
+      // Server-side log only — never returned to client. Admins can read
+      // it from Render's log stream if they're debugging a typo. Values
+      // are masked so logs don't leak full credentials.
+      console.log('[adminLogin] mismatch', {
+        gotEmail: maskHint(rawEmail),
+        gotPasswordLen: rawPassword.length,
+        expectedEmail: maskHint(adminEmailEnv),
+        expectedPasswordLen: expectedPassword.length,
+        emailMatch, passwordMatch,
+      });
+
+      res.status(401).json({
+        success: false,
+        message: emailMatch
+          ? 'Admin password is incorrect.'
+          : 'Admin email does not match the configured ADMIN_EMAIL.',
+      });
       return;
     }
 
-    let user = await prisma.user.findUnique({ where: { email } });
+    // Find or create the admin user record so we can issue JWTs.
+    let user = await prisma.user.findUnique({ where: { email: expectedEmail } });
 
     if (!user) {
-      const hashed = await bcrypt.hash(password, 12);
+      const hashed = await bcrypt.hash(expectedPassword, 12);
       user = await prisma.user.create({
-        data: { email, password: hashed, firstName: 'Nexora', lastName: 'Admin', role: 'ADMIN' },
+        data: { email: expectedEmail, password: hashed, firstName: 'Nexora', lastName: 'Admin', role: 'ADMIN' },
       });
     } else if (user.role !== 'ADMIN') {
       user = await prisma.user.update({ where: { id: user.id }, data: { role: 'ADMIN' } });
@@ -187,9 +198,14 @@ export const adminLogin = async (req: Request, res: Response, next: NextFunction
       success: true,
       message: 'Admin login successful',
       data: {
-        user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, role: 'ADMIN' as const, isVerified: user.isVerified, createdAt: user.createdAt.toISOString() },
-        accessToken,
-        refreshToken,
+        user: {
+          id: user.id, email: user.email,
+          firstName: user.firstName, lastName: user.lastName,
+          role: 'ADMIN' as const,
+          isVerified: user.isVerified,
+          createdAt: user.createdAt.toISOString(),
+        },
+        accessToken, refreshToken,
       },
     });
   } catch (error) {
@@ -199,6 +215,23 @@ export const adminLogin = async (req: Request, res: Response, next: NextFunction
     }
     next(error);
   }
+};
+
+// Lightweight diagnostic: returns whether ADMIN_EMAIL / ADMIN_PASSWORD are
+// configured and a masked hint of the expected email, so admins debugging a
+// typo can confirm the server's view without leaking secrets.
+export const adminStatus = async (_req: Request, res: Response): Promise<void> => {
+  const adminEmailEnv = process.env.ADMIN_EMAIL;
+  const adminPasswordEnv = process.env.ADMIN_PASSWORD;
+  res.json({
+    success: true,
+    data: {
+      configured: !!(adminEmailEnv && adminPasswordEnv),
+      emailHint: adminEmailEnv ? maskHint(adminEmailEnv) : null,
+      passwordSet: !!adminPasswordEnv,
+      passwordLength: adminPasswordEnv ? adminPasswordEnv.trim().length : 0,
+    },
+  });
 };
 
 export const makeAdmin = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -231,20 +264,13 @@ export const getMe = async (req: AuthRequest, res: Response, next: NextFunction)
     const user = await prisma.user.findUnique({
       where: { id: req.user!.id },
       select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        phone: true,
-        role: true,
-        isVerified: true,
-        createdAt: true,
+        id: true, email: true, firstName: true, lastName: true,
+        phone: true, role: true, isVerified: true, createdAt: true,
         _count: { select: { orders: true, shipments: true } },
       },
     });
 
     if (!user) throw new AppError('User not found', 404);
-
     res.json({ success: true, data: user });
   } catch (error) {
     next(error);

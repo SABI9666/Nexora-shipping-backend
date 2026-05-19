@@ -105,9 +105,6 @@ function parseDate(s?: string): Date | null {
   return isNaN(d.getTime()) ? null : d;
 }
 
-// Recompute & update invoice statuses for a set of invoice IDs.
-// Marks an invoice PAID once total credits + allocations cover its total.
-// Flips back to SENT if a payment was later removed.
 async function reconcileInvoiceStatuses(invoiceIds: string[]): Promise<void> {
   const unique = Array.from(new Set(invoiceIds.filter(Boolean)));
   for (const id of unique) {
@@ -527,10 +524,14 @@ export const downloadVoucherPdf = async (req: AuthRequest, res: Response, next: 
       select: { companyTrn: true },
     });
 
-    const isSupplierPayment =
+    // Receipt and Credit vouchers reuse the same polished bill-allocation
+    // PDF layout that Purchase / Supplier-Payment / Payment vouchers use.
+    const useBillAllocationPdf =
       v.type === VoucherType.SUPPLIER_PAYMENT ||
       v.type === VoucherType.PURCHASE ||
-      v.type === VoucherType.PAYMENT;
+      v.type === VoucherType.PAYMENT ||
+      v.type === VoucherType.RECEIPT ||
+      v.type === VoucherType.CREDIT_NOTE;
 
     const acDisplay = v.bankAccount
       ? { code: v.bankAccount.label || v.bankAccount.bankName, name: `${v.bankAccount.bankName} · ${v.bankAccount.accountNumber}` }
@@ -539,8 +540,9 @@ export const downloadVoucherPdf = async (req: AuthRequest, res: Response, next: 
       : null;
 
     let buffer: Buffer;
-    if (isSupplierPayment && (v.allocations.length > 0 || v.paymentMethod || v.chequeNumber)) {
+    if (useBillAllocationPdf && (v.allocations.length > 0 || v.paymentMethod || v.chequeNumber)) {
       buffer = await generateSupplierPaymentVoucherPdfBuffer({
+        voucherType: v.type,
         voucherNumber: v.voucherNumber,
         voucherDate: v.voucherDate,
         paymentMethod: v.paymentMethod,

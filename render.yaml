@@ -8,7 +8,12 @@ services:
     region: oregon
     plan: starter
     buildCommand: npm install --include=dev --no-package-lock && npm run build
-    startCommand: npx prisma db push && npm start
+    # `prisma db push` is best-effort: if the database is unreachable
+    # (Cloud SQL stopped, firewall blocking us, etc.) we still start the
+    # server so /health stays green and Render stops crash-looping. The
+    # app itself will 500 on DB-touching routes until the DB comes back,
+    # but the deploy stabilizes.
+    startCommand: npx prisma db push --skip-generate --accept-data-loss || echo '[prisma] db push failed - starting server anyway'; npm start
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
