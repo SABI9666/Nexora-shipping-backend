@@ -27,6 +27,9 @@ const fmtDate = (d: Date | string | null | undefined) =>
 const safe = (s: string | null | undefined) => (s ?? '').toString().trim();
 
 export type SupplierPaymentVoucherForPdf = {
+  // Optional: drives header title / column label / amount banner so the
+  // same layout reads correctly for Purchase, Receipt and Credit vouchers.
+  voucherType?: string;
   voucherNumber: string;
   voucherDate: Date | string;
   paymentMethod: string | null;
@@ -71,6 +74,29 @@ const PAYMENT_METHOD_LABEL: Record<string, string> = {
   CONTRA: 'Contra',
 };
 
+// Type-specific labels — keeps the layout but matches the verb.
+const TITLE_BY_TYPE: Record<string, string> = {
+  RECEIPT: 'RECEIPT VOUCHER',
+  CREDIT_NOTE: 'CREDIT VOUCHER',
+  PURCHASE: 'PURCHASE VOUCHER',
+  SUPPLIER_PAYMENT: 'PURCHASE VOUCHER',
+  PAYMENT: 'PAYMENT VOUCHER',
+};
+const ALLOC_COL_BY_TYPE: Record<string, string> = {
+  RECEIPT: 'RECD. AMT.',
+  CREDIT_NOTE: 'CR. AMT.',
+  PURCHASE: 'PAID AMT.',
+  SUPPLIER_PAYMENT: 'PAID AMT.',
+  PAYMENT: 'PAID AMT.',
+};
+const BANNER_BY_TYPE: Record<string, string> = {
+  RECEIPT: 'AMOUNT RECEIVED',
+  CREDIT_NOTE: 'CREDIT ISSUED',
+  PURCHASE: 'AMOUNT PAID',
+  SUPPLIER_PAYMENT: 'AMOUNT PAID',
+  PAYMENT: 'AMOUNT PAID',
+};
+
 export function generateSupplierPaymentVoucherPdfBuffer(v: SupplierPaymentVoucherForPdf): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margins: PAGE_MARGIN });
@@ -86,9 +112,14 @@ export function generateSupplierPaymentVoucherPdfBuffer(v: SupplierPaymentVouche
     const fullW = right - left;
     let y = CONTENT_TOP;
 
+    const typeKey = v.voucherType || '';
+    const title = TITLE_BY_TYPE[typeKey] || 'SUPPLIER PAYMENT VOUCHER';
+    const allocColLabel = ALLOC_COL_BY_TYPE[typeKey] || 'RECD. AMT.';
+    const bannerLabel = BANNER_BY_TYPE[typeKey] || 'AMOUNT PAID';
+
     // ── Header strip ───────────────────────────────────────────────────────
     doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(20)
-      .text('SUPPLIER PAYMENT VOUCHER', left, y, { width: fullW * 0.65, lineBreak: false });
+      .text(title, left, y, { width: fullW * 0.65, lineBreak: false });
     if (v.companyTrn) {
       doc.fillColor(NAVY_SOFT).font('Helvetica').fontSize(9)
         .text(`TRN: ${v.companyTrn}`, left, y + 26, { width: fullW * 0.65, lineBreak: false });
@@ -115,11 +146,9 @@ export function generateSupplierPaymentVoucherPdfBuffer(v: SupplierPaymentVouche
     y += 16;
 
     // ── PAYMENT INFORMATION ─────────────────────────────────────────────────
-    // Two-column key-value layout. Each value may span multiple lines, so we
-    // measure height explicitly per row before advancing y.
-    const labelW = 110;          // fixed label column width
-    const gapXY = 14;            // gap between label and value
-    const colGap = 28;           // gap between the two columns
+    const labelW = 110;
+    const gapXY = 14;
+    const colGap = 28;
     const halfW = (fullW - colGap) / 2;
     const valueW_full = fullW - labelW - gapXY;
     const valueW_half = halfW - labelW - gapXY;
@@ -130,15 +159,12 @@ export function generateSupplierPaymentVoucherPdfBuffer(v: SupplierPaymentVouche
       ? `${v.account.code} · ${v.account.name}`
       : (v.issuedTo || '—');
 
-    // Bank info can be long; split into bank-line + account number line for
-    // graceful wrapping.
     const bankPrimary = v.contraAccount ? v.contraAccount.code : '';
     const bankSecondary = v.contraAccount ? v.contraAccount.name : '';
     const acFieldValue = bankPrimary && bankSecondary
       ? `${bankPrimary}\n${bankSecondary}`
       : (bankPrimary || bankSecondary || '—');
 
-    // Build row list — cheque rows only included if paymentMethod === CHEQUE.
     const isChequePayment = v.paymentMethod === 'CHEQUE';
 
     const leftFields: Field[] = [
@@ -160,12 +186,10 @@ export function generateSupplierPaymentVoucherPdfBuffer(v: SupplierPaymentVouche
 
     const rowGap = 8;
     const drawField = (f: Field, x: number, yy: number, w: number): number => {
-      // Label
       doc.fillColor(MUTED).font('Helvetica').fontSize(8)
         .text(f.label.toUpperCase(), x, yy + 1, {
           width: labelW, characterSpacing: 0.5, lineBreak: false,
         });
-      // Value — allow wrapping for multi-line content
       doc.fillColor(f.valueColor || TEXT).font('Helvetica-Bold').fontSize(10);
       const valueX = x + labelW + gapXY;
       const valueWidth = w - labelW - gapXY;
@@ -174,12 +198,10 @@ export function generateSupplierPaymentVoucherPdfBuffer(v: SupplierPaymentVouche
         lineGap: 1,
         ellipsis: true,
       });
-      // Measure how tall the value column ended up
       const valueH = doc.heightOfString(f.value, { width: valueWidth, lineGap: 1 });
       return Math.max(valueH, 12);
     };
 
-    // Walk the two columns in parallel; each row uses max(left, right) height
     const maxRows = Math.max(leftFields.length, rightFields.length);
     for (let i = 0; i < maxRows; i += 1) {
       const lf = leftFields[i];
@@ -195,7 +217,7 @@ export function generateSupplierPaymentVoucherPdfBuffer(v: SupplierPaymentVouche
       y += Math.max(lh, rh, 12) + rowGap;
     }
 
-    void valueW_full; void valueW_half; // (kept for clarity, intentionally unused)
+    void valueW_full; void valueW_half;
 
     y += 4;
 
@@ -232,15 +254,13 @@ export function generateSupplierPaymentVoucherPdfBuffer(v: SupplierPaymentVouche
     }
 
     // ── Allocations table ───────────────────────────────────────────────────
-    // Column widths re-balanced so invoice / ref / job columns fit typical
-    // codes without clipping.
     const cols = [
       { key: 'job',   label: 'JOB NO',     w: fullW * 0.20, align: 'left' as const },
       { key: 'ref',   label: 'REF NO',     w: fullW * 0.18, align: 'left' as const },
       { key: 'inv',   label: 'INV. NO.',   w: fullW * 0.18, align: 'left' as const },
       { key: 'date',  label: 'DATE',       w: fullW * 0.10, align: 'left' as const },
       { key: 'bill',  label: 'AMOUNT',     w: fullW * 0.10, align: 'right' as const },
-      { key: 'recd',  label: 'RECD. AMT.', w: fullW * 0.11, align: 'right' as const },
+      { key: 'recd',  label: allocColLabel, w: fullW * 0.11, align: 'right' as const },
       { key: 'bal',   label: 'BAL. AMT.',  w: fullW * 0.13, align: 'right' as const },
     ];
     const colX: number[] = [];
@@ -328,10 +348,10 @@ export function generateSupplierPaymentVoucherPdfBuffer(v: SupplierPaymentVouche
     doc.text(fmtNum(totalBal),  colX[6], y + 7, { width: cols[6].w - 5, align: 'right', lineBreak: false });
     y += 32;
 
-    // ── Amount paid panel ──────────────────────────────────────────────────
+    // ── Amount banner ──────────────────────────────────────────────────────
     doc.fillColor(NAVY).rect(left, y, fullW, 36).fill();
     doc.fillColor('#ffffff').font('Helvetica').fontSize(9)
-      .text('AMOUNT PAID', left + 14, y + 6, {
+      .text(bannerLabel, left + 14, y + 6, {
         width: fullW - 28, characterSpacing: 0.6, lineBreak: false,
       });
     doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(18)
