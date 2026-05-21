@@ -3,6 +3,7 @@ import { Role, VoucherDirection, VoucherType, InvoiceStatus, OrderStatus } from 
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../types';
+import { generateCustomerStatementPdfBuffer } from '../utils/customerStatementPdf';
 
 function parseDateRange(req: AuthRequest): { from: Date | null; to: Date | null } {
   const fromStr = req.query.from as string | undefined;
@@ -484,6 +485,205 @@ export const accountStatement = async (req: AuthRequest, res: Response, next: Ne
         rows: allRows,
       },
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// =====================================================================
+// CUSTOMER STATEMENT (SOA) — per-customer outstanding statement.
+// Returns the list of open invoices with aging days and a running
+// cumulative balance, ready to render as the front-office SOA.
+// =====================================================================
+
+type CustomerStatementBuildResult = {
+  account: {
+    id: string;
+    code: string;
+    name: string;
+    accountGroup: { name: string; groupType: string } | null;
+    phone1: string | null;
+    mobile1: string | null;
+    mobile2: string | null;
+    trn: string | null;
+    email: string | null;
+    address: string | null;
+  };
+  asOf: Date;
+  currency: string;
+  totals: { invoiceCount: number; totalOutstanding: number };
+  rows: Array<{
+    id: string;
+    invoiceNumber: string;
+    invoiceDate: Date;
+    currency: string;
+    balance: number;
+    cumBalance: number;
+    days: number;
+  }>;
+};
+
+async function buildCustomerStatement(accountId: string, asOf: Date): Promise<CustomerStatementBuildResult> {
+  const account = await prisma.account.findUnique({
+    where: { id: accountId },
+    include: { accountGroup: true },
+  });
+  if (!account) throw new AppError('Account not found', 404);
+
+  // Match by accountId OR by case-insensitive billToName so legacy
+  // invoices (which may not have accountId) still appear.
+  const invoices = await prisma.invoice.findMany({
+    where: {
+      invoiceDate: { lte: asOf },
+      status: { not: InvoiceStatus.CANCELLED },
+      OR: [
+        { accountId },
+        {
+          AND: [
+            { accountId: null },
+            { billToName: { equals: account.name.trim(), mode: 'insensitive' } },
+          ],
+        },
+      ],
+    },
+    orderBy: { invoiceDate: 'asc' },
+    select: {
+      id: true,
+      invoiceNumber: true,
+      invoiceDate: true,
+      currency: true,
+      total: true,
+      vouchers: {
+        where: { voucherDate: { lte: asOf } },
+        select: { amount: true, direction: true },
+      },
+      voucherAllocations: {
+        select: {
+          allocatedAmount: true,
+          voucher: { select: { voucherDate: true } },
+        },
+      },
+    },
+  });
+
+  let cum = 0;
+  const rows = invoices
+    .map((inv) => {
+      let credit = 0;
+      let debit = 0;
+      for (const vv of inv.vouchers) {
+        if (vv.direction === VoucherDirection.CREDIT) credit += vv.amount;
+        else debit += vv.amount;
+      }
+      const allocated = inv.voucherAllocations
+        .filter((a) => !a.voucher || new Date(a.voucher.voucherDate).getTime() <= asOf.getTime())
+        .reduce((s, a) => s + a.allocatedAmount, 0);
+      const balance = round2(inv.total + debit - credit - allocated);
+      const days = Math.max(
+        0,
+        Math.floor((asOf.getTime() - new Date(inv.invoiceDate).getTime()) / (1000 * 60 * 60 * 24)),
+      );
+      return {
+        id: inv.id,
+        invoiceNumber: inv.invoiceNumber,
+        invoiceDate: inv.invoiceDate,
+        currency: inv.currency,
+        balance,
+        days,
+      };
+    })
+    .filter((r) => r.balance > 0.005)
+    .map((r) => {
+      cum = round2(cum + r.balance);
+      return { ...r, cumBalance: cum };
+    });
+
+  const totalOutstanding = round2(rows.reduce((s, r) => s + r.balance, 0));
+  const currency = rows[0]?.currency || 'AED';
+
+  return {
+    account: {
+      id: account.id,
+      code: account.code,
+      name: account.name,
+      accountGroup: account.accountGroup
+        ? { name: account.accountGroup.name, groupType: account.accountGroup.groupType }
+        : null,
+      phone1: account.phone1,
+      mobile1: account.mobile1,
+      mobile2: account.mobile2,
+      trn: account.trn,
+      email: account.email,
+      address: account.address,
+    },
+    asOf,
+    currency,
+    totals: { invoiceCount: rows.length, totalOutstanding },
+    rows,
+  };
+}
+
+export const customerStatement = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const accountId = req.query.accountId as string | undefined;
+    if (!accountId) throw new AppError('accountId is required', 400);
+
+    const asOfStr = req.query.asOf as string | undefined;
+    const asOf = asOfStr ? new Date(asOfStr) : new Date();
+    asOf.setHours(23, 59, 59, 999);
+
+    const data = await buildCustomerStatement(accountId, asOf);
+    res.json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const customerStatementPdf = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const accountId = req.query.accountId as string | undefined;
+    if (!accountId) throw new AppError('accountId is required', 400);
+
+    const asOfStr = req.query.asOf as string | undefined;
+    const asOf = asOfStr ? new Date(asOfStr) : new Date();
+    asOf.setHours(23, 59, 59, 999);
+
+    const data = await buildCustomerStatement(accountId, asOf);
+
+    const defaultBank = await prisma.bankAccount.findFirst({
+      where: { isDefault: true },
+      select: { companyTrn: true },
+    });
+
+    const buffer = await generateCustomerStatementPdfBuffer({
+      customer: {
+        code: data.account.code,
+        name: data.account.name,
+        phone: data.account.phone1,
+        mobile: data.account.mobile1 || data.account.mobile2,
+        trn: data.account.trn,
+        address: data.account.address,
+        email: data.account.email,
+      },
+      asOf: data.asOf,
+      currency: data.currency,
+      totalOutstanding: data.totals.totalOutstanding,
+      rows: data.rows.map((r) => ({
+        invoiceNumber: r.invoiceNumber,
+        invoiceDate: r.invoiceDate,
+        days: r.days,
+        balance: r.balance,
+        cumBalance: r.cumBalance,
+      })),
+      companyTrn: defaultBank?.companyTrn || undefined,
+    });
+
+    const safeName = (data.account.name || 'CUSTOMER').replace(/[^A-Z0-9_-]+/gi, '_').slice(0, 40);
+    const asOfStamp = data.asOf.toISOString().slice(0, 10).replace(/-/g, '');
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="SOA_${safeName}_${asOfStamp}.pdf"`);
+    res.send(buffer);
   } catch (error) {
     next(error);
   }
