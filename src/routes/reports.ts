@@ -6,6 +6,8 @@ import {
   voucherRegister,
   outstandingReceivables,
   accountStatement,
+  customerStatement,
+  customerStatementPdf,
   dashboardSnapshot,
 } from '../controllers/reportsController';
 
@@ -19,5 +21,7 @@ router.get('/orders-summary', ordersSummary);
 router.get('/voucher-register', voucherRegister);
 router.get('/outstanding-receivables', outstandingReceivables);
 router.get('/account-statement', accountStatement);
+router.get('/customer-statement', customerStatement);
+router.get('/customer-statement/pdf', customerStatementPdf);
 
 export default router;
