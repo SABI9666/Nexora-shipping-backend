@@ -493,7 +493,9 @@ export const accountStatement = async (req: AuthRequest, res: Response, next: Ne
 // =====================================================================
 // CUSTOMER STATEMENT (SOA) — per-customer outstanding statement.
 // Returns the list of open invoices with aging days and a running
-// cumulative balance, ready to render as the front-office SOA.
+// cumulative balance, PLUS the voucher transactions (receipts /
+// credit notes / allocations) so the user can see the underlying
+// payment activity.
 // =====================================================================
 
 type CustomerStatementBuildResult = {
@@ -511,7 +513,13 @@ type CustomerStatementBuildResult = {
   };
   asOf: Date;
   currency: string;
-  totals: { invoiceCount: number; totalOutstanding: number };
+  totals: {
+    invoiceCount: number;
+    totalOutstanding: number;
+    voucherCount: number;
+    totalReceived: number;   // credit-side vouchers
+    totalDebited: number;    // debit-side vouchers (e.g. debit notes)
+  };
   rows: Array<{
     id: string;
     invoiceNumber: string;
@@ -520,6 +528,26 @@ type CustomerStatementBuildResult = {
     balance: number;
     cumBalance: number;
     days: number;
+  }>;
+  vouchers: Array<{
+    id: string;
+    voucherNumber: string;
+    voucherDate: Date;
+    type: string;
+    direction: 'DEBIT' | 'CREDIT';
+    paymentMethod: string | null;
+    chequeNumber: string | null;
+    amount: number;
+    currency: string;
+    narration: string | null;
+    invoiceNumber: string | null;
+    orderNumber: string | null;
+    allocations: Array<{
+      invoiceNumber: string | null;
+      jobNo: string | null;
+      refNo: string | null;
+      allocatedAmount: number;
+    }>;
   }>;
 };
 
@@ -601,6 +629,55 @@ async function buildCustomerStatement(accountId: string, asOf: Date): Promise<Cu
   const totalOutstanding = round2(rows.reduce((s, r) => s + r.balance, 0));
   const currency = rows[0]?.currency || 'AED';
 
+  // ---- Voucher activity for this customer ------------------------------
+  const voucherRecords = await prisma.voucher.findMany({
+    where: {
+      accountId,
+      voucherDate: { lte: asOf },
+    },
+    orderBy: { voucherDate: 'desc' },
+    include: {
+      invoice: { select: { invoiceNumber: true } },
+      order: { select: { orderNumber: true } },
+      allocations: {
+        orderBy: { createdAt: 'asc' },
+        select: {
+          invoiceNumber: true,
+          jobNo: true,
+          refNo: true,
+          allocatedAmount: true,
+        },
+      },
+    },
+  });
+
+  let totalReceived = 0;
+  let totalDebited = 0;
+  const vouchers = voucherRecords.map((v) => {
+    if (v.direction === VoucherDirection.CREDIT) totalReceived += v.amount;
+    else totalDebited += v.amount;
+    return {
+      id: v.id,
+      voucherNumber: v.voucherNumber,
+      voucherDate: v.voucherDate,
+      type: v.type,
+      direction: v.direction as 'DEBIT' | 'CREDIT',
+      paymentMethod: v.paymentMethod,
+      chequeNumber: v.chequeNumber,
+      amount: round2(v.amount),
+      currency: v.currency,
+      narration: v.narration,
+      invoiceNumber: v.invoice?.invoiceNumber || null,
+      orderNumber: v.order?.orderNumber || null,
+      allocations: v.allocations.map((a) => ({
+        invoiceNumber: a.invoiceNumber,
+        jobNo: a.jobNo,
+        refNo: a.refNo,
+        allocatedAmount: round2(a.allocatedAmount),
+      })),
+    };
+  });
+
   return {
     account: {
       id: account.id,
@@ -618,8 +695,15 @@ async function buildCustomerStatement(accountId: string, asOf: Date): Promise<Cu
     },
     asOf,
     currency,
-    totals: { invoiceCount: rows.length, totalOutstanding },
+    totals: {
+      invoiceCount: rows.length,
+      totalOutstanding,
+      voucherCount: vouchers.length,
+      totalReceived: round2(totalReceived),
+      totalDebited: round2(totalDebited),
+    },
     rows,
+    vouchers,
   };
 }
 
@@ -674,6 +758,19 @@ export const customerStatementPdf = async (req: AuthRequest, res: Response, next
         days: r.days,
         balance: r.balance,
         cumBalance: r.cumBalance,
+      })),
+      vouchers: data.vouchers.map((v) => ({
+        voucherNumber: v.voucherNumber,
+        voucherDate: v.voucherDate,
+        type: v.type,
+        direction: v.direction,
+        paymentMethod: v.paymentMethod,
+        chequeNumber: v.chequeNumber,
+        amount: v.amount,
+        narration: v.narration,
+        appliedTo: v.allocations.length > 0
+          ? v.allocations.map((a) => a.invoiceNumber).filter(Boolean).join(', ')
+          : v.invoiceNumber,
       })),
       companyTrn: defaultBank?.companyTrn || undefined,
     });
