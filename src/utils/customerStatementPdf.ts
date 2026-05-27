@@ -3,6 +3,10 @@
 // Renders the per-customer outstanding statement in the format used by
 // the front-office: invoice-by-invoice with days, balance and a cumulative
 // running balance, followed by the total in words.
+//
+// If the controller passes a `vouchers` array, an additional "Receipts &
+// Allocations" section is rendered below the outstanding table so the
+// recipient can see what payments / credits have been applied.
 
 import PDFDocument from 'pdfkit';
 import {
@@ -19,6 +23,8 @@ const MUTED = '#475569';
 const DIVIDER = '#cbd5e1';
 const ROW_ALT = '#fafbfc';
 const NAVY_TINT = '#eef2f7';
+const GREEN = '#047857';
+const ROSE = '#b91c1c';
 
 const fmtNum = (n: number) =>
   n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -77,12 +83,43 @@ function amountToWordsFull(amount: number, currency = 'AED'): string {
   return `${currency.toUpperCase()} ${major} and ${minor} ${minorWords} Only`;
 }
 
+const PAYMENT_METHOD_LABEL: Record<string, string> = {
+  CASH: 'Cash',
+  CHEQUE: 'Cheque',
+  BANK_TRANSFER: 'Bank Tr.',
+  CONTRA: 'Contra',
+};
+
+const VOUCHER_TYPE_SHORT: Record<string, string> = {
+  RECEIPT: 'Receipt',
+  CREDIT_NOTE: 'Credit',
+  DEBIT_NOTE: 'Debit',
+  PAYMENT: 'Payment',
+  PURCHASE: 'Purchase',
+  SUPPLIER_PAYMENT: 'Sup. Pmt',
+  CASH: 'Cash',
+  BANK: 'Bank',
+  JOURNAL: 'Journal',
+};
+
 export type CustomerStatementRow = {
   invoiceNumber: string;
   invoiceDate: Date | string;
   days: number;
   balance: number;
   cumBalance: number;
+};
+
+export type CustomerStatementVoucherForPdf = {
+  voucherNumber: string;
+  voucherDate: Date | string;
+  type: string;
+  direction: 'DEBIT' | 'CREDIT';
+  paymentMethod?: string | null;
+  chequeNumber?: string | null;
+  amount: number;
+  narration?: string | null;
+  appliedTo?: string | null;   // invoice number(s) this voucher was applied against
 };
 
 export type CustomerStatementForPdf = {
@@ -99,6 +136,7 @@ export type CustomerStatementForPdf = {
   currency: string;
   totalOutstanding: number;
   rows: CustomerStatementRow[];
+  vouchers?: CustomerStatementVoucherForPdf[];
   companyTrn?: string;
 };
 
@@ -131,16 +169,13 @@ export function generateCustomerStatementPdfBuffer(v: CustomerStatementForPdf): 
     // ── Customer info bordered box ─────────────────────────────────────────
     const infoH = 60;
     doc.lineWidth(0.7).strokeColor(DIVIDER).rect(left, y, fullW, infoH).stroke();
-    // Vertical divider between name and phone columns
     const splitX = left + fullW * 0.62;
     doc.lineWidth(0.7).strokeColor(DIVIDER).moveTo(splitX, y).lineTo(splitX, y + infoH).stroke();
 
-    // Customer name (left column)
     doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(13)
       .text(v.customer.name, left + 10, y + 14, {
         width: splitX - left - 20, lineBreak: false, ellipsis: true,
       });
-    // Optional secondary line (code + TRN)
     const sub: string[] = [];
     if (v.customer.code) sub.push(v.customer.code);
     if (v.customer.trn) sub.push(`TRN ${v.customer.trn}`);
@@ -151,7 +186,6 @@ export function generateCustomerStatementPdfBuffer(v: CustomerStatementForPdf): 
         });
     }
 
-    // Phone block (right column)
     const phoneX = splitX + 10;
     const phoneW = right - phoneX - 10;
     doc.fillColor(TEXT).font('Helvetica').fontSize(10)
@@ -164,7 +198,7 @@ export function generateCustomerStatementPdfBuffer(v: CustomerStatementForPdf): 
 
     y += infoH;
 
-    // ── Table ──────────────────────────────────────────────────────────────
+    // ── Outstanding table ──────────────────────────────────────────────────
     const cols = [
       { key: 'sl',    label: 'Sl No',           w: fullW * 0.07,  align: 'center' as const },
       { key: 'inv',   label: 'Invoice No',      w: fullW * 0.22,  align: 'left'   as const },
@@ -183,7 +217,6 @@ export function generateCustomerStatementPdfBuffer(v: CustomerStatementForPdf): 
     const rowH = 18;
 
     const drawTableHead = (yy: number) => {
-      // Outer rect + fill
       doc.fillColor(NAVY).rect(left, yy, fullW, headRowH).fill();
       doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(9);
       cols.forEach((c, i) => {
@@ -191,7 +224,6 @@ export function generateCustomerStatementPdfBuffer(v: CustomerStatementForPdf): 
           width: c.w - 10, align: c.align, lineBreak: false,
         });
       });
-      // Column dividers (subtle white)
       doc.lineWidth(0.3).strokeColor('#ffffff');
       for (let i = 1; i < cols.length; i += 1) {
         doc.moveTo(colX[i], yy + 4).lineTo(colX[i], yy + headRowH - 4).stroke();
@@ -200,13 +232,10 @@ export function generateCustomerStatementPdfBuffer(v: CustomerStatementForPdf): 
 
     const drawCellBorders = (yy: number) => {
       doc.lineWidth(0.4).strokeColor(DIVIDER);
-      // Bottom border for the row
       doc.moveTo(left, yy + rowH).lineTo(right, yy + rowH).stroke();
-      // Vertical dividers between columns
       for (let i = 1; i < cols.length; i += 1) {
         doc.moveTo(colX[i], yy).lineTo(colX[i], yy + rowH).stroke();
       }
-      // Outer left/right
       doc.moveTo(left, yy).lineTo(left, yy + rowH).stroke();
       doc.moveTo(right, yy).lineTo(right, yy + rowH).stroke();
     };
@@ -215,7 +244,6 @@ export function generateCustomerStatementPdfBuffer(v: CustomerStatementForPdf): 
     y += headRowH;
 
     v.rows.forEach((r, idx) => {
-      // Page break with header repeat
       if (y + rowH > contentBottom(doc) - 60) {
         doc.addPage();
         y = CONTENT_TOP;
@@ -264,7 +292,6 @@ export function generateCustomerStatementPdfBuffer(v: CustomerStatementForPdf): 
     doc.lineWidth(0.6).strokeColor(NAVY)
       .moveTo(left, y).lineTo(right, y).stroke()
       .moveTo(left, y + totH).lineTo(right, y + totH).stroke();
-    // Vertical dividers (carry through)
     doc.lineWidth(0.4).strokeColor(DIVIDER);
     for (let i = 1; i < cols.length; i += 1) {
       doc.moveTo(colX[i], y).lineTo(colX[i], y + totH).stroke();
@@ -294,6 +321,139 @@ export function generateCustomerStatementPdfBuffer(v: CustomerStatementForPdf): 
         width: fullW - 16, lineBreak: false, ellipsis: true,
       });
     y = wordsY + wordsH;
+
+    // ── Receipts & Allocations table (if vouchers exist) ───────────────────
+    const vouchers = v.vouchers ?? [];
+    if (vouchers.length > 0) {
+      y += 14;
+
+      // If close to footer, push to next page so the section header
+      // doesn't get orphaned.
+      if (y + 80 > contentBottom(doc) - 40) {
+        doc.addPage();
+        y = CONTENT_TOP;
+      }
+
+      doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(11)
+        .text('Receipts & Allocations', left, y, { width: fullW, lineBreak: false });
+      doc.fillColor(MUTED).font('Helvetica').fontSize(8.5)
+        .text(`${vouchers.length} voucher${vouchers.length === 1 ? '' : 's'} on this customer up to ${fmtDateGB(v.asOf)}`,
+          left, y + 14, { width: fullW, lineBreak: false });
+      y += 30;
+
+      const vcols = [
+        { key: 'date',  label: 'Date',         w: fullW * 0.11, align: 'center' as const },
+        { key: 'vno',   label: 'Voucher No',   w: fullW * 0.18, align: 'left'   as const },
+        { key: 'type',  label: 'Type',         w: fullW * 0.11, align: 'left'   as const },
+        { key: 'method',label: 'Method',       w: fullW * 0.11, align: 'left'   as const },
+        { key: 'app',   label: 'Applied To',   w: fullW * 0.27, align: 'left'   as const },
+        { key: 'dr',    label: 'Debit',        w: fullW * 0.11, align: 'right'  as const },
+        { key: 'cr',    label: 'Credit',       w: fullW * 0.11, align: 'right'  as const },
+      ];
+      const vColX: number[] = [];
+      {
+        let x = left;
+        for (const c of vcols) { vColX.push(x); x += c.w; }
+      }
+
+      const drawVoucherHead = (yy: number) => {
+        doc.fillColor(NAVY).rect(left, yy, fullW, headRowH).fill();
+        doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8.5);
+        vcols.forEach((c, i) => {
+          doc.text(c.label, vColX[i] + 5, yy + 7, {
+            width: c.w - 10, align: c.align, lineBreak: false,
+          });
+        });
+        doc.lineWidth(0.3).strokeColor('#ffffff');
+        for (let i = 1; i < vcols.length; i += 1) {
+          doc.moveTo(vColX[i], yy + 4).lineTo(vColX[i], yy + headRowH - 4).stroke();
+        }
+      };
+
+      drawVoucherHead(y);
+      y += headRowH;
+
+      let totalDebit = 0;
+      let totalCredit = 0;
+
+      vouchers.forEach((vv, idx) => {
+        if (y + rowH > contentBottom(doc) - 40) {
+          doc.addPage();
+          y = CONTENT_TOP;
+          drawVoucherHead(y);
+          y += headRowH;
+        }
+        if (idx % 2 === 1) {
+          doc.fillColor(ROW_ALT).rect(left, y, fullW, rowH).fill();
+        }
+        const isCr = vv.direction === 'CREDIT';
+        if (isCr) totalCredit += vv.amount;
+        else totalDebit += vv.amount;
+
+        const methodTxt = vv.paymentMethod
+          ? (PAYMENT_METHOD_LABEL[vv.paymentMethod] || vv.paymentMethod) +
+            (vv.chequeNumber ? ` · ${vv.chequeNumber}` : '')
+          : '—';
+        const typeTxt = VOUCHER_TYPE_SHORT[vv.type] || vv.type;
+        const appliedTxt = vv.appliedTo && vv.appliedTo.trim()
+          ? vv.appliedTo
+          : (vv.narration || '—');
+
+        const cells = [
+          { v: fmtDateGB(vv.voucherDate),                   font: 'Helvetica',      color: TEXT },
+          { v: vv.voucherNumber,                            font: 'Helvetica-Bold', color: NAVY },
+          { v: typeTxt,                                     font: 'Helvetica',      color: TEXT },
+          { v: methodTxt,                                   font: 'Helvetica',      color: MUTED },
+          { v: appliedTxt,                                  font: 'Helvetica',      color: TEXT },
+          { v: isCr ? '' : fmtNum(vv.amount),               font: 'Helvetica',      color: ROSE },
+          { v: isCr ? fmtNum(vv.amount) : '',               font: 'Helvetica-Bold', color: GREEN },
+        ];
+        doc.fontSize(9);
+        cells.forEach((cell, i) => {
+          doc.font(cell.font).fillColor(cell.color);
+          const padLeft = vcols[i].align === 'left' ? 5 : 0;
+          const padRight = vcols[i].align === 'right' ? 5 : 0;
+          doc.text(cell.v, vColX[i] + padLeft, y + 5, {
+            width: vcols[i].w - padLeft - padRight,
+            align: vcols[i].align,
+            lineBreak: false,
+            ellipsis: true,
+          });
+        });
+        // Borders
+        doc.lineWidth(0.4).strokeColor(DIVIDER);
+        doc.moveTo(left, y + rowH).lineTo(right, y + rowH).stroke();
+        for (let i = 1; i < vcols.length; i += 1) {
+          doc.moveTo(vColX[i], y).lineTo(vColX[i], y + rowH).stroke();
+        }
+        doc.moveTo(left, y).lineTo(left, y + rowH).stroke();
+        doc.moveTo(right, y).lineTo(right, y + rowH).stroke();
+        y += rowH;
+      });
+
+      // Voucher totals row
+      const vTotH = 22;
+      doc.fillColor(NAVY_TINT).rect(left, y, fullW, vTotH).fill();
+      doc.lineWidth(0.4).strokeColor(NAVY)
+        .moveTo(left, y).lineTo(right, y).stroke()
+        .moveTo(left, y + vTotH).lineTo(right, y + vTotH).stroke();
+      for (let i = 1; i < vcols.length; i += 1) {
+        doc.moveTo(vColX[i], y).lineTo(vColX[i], y + vTotH).stroke();
+      }
+      doc.moveTo(left, y).lineTo(left, y + vTotH).stroke();
+      doc.moveTo(right, y).lineTo(right, y + vTotH).stroke();
+
+      doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(9)
+        .text('TOTAL', vColX[0] + 5, y + 6, {
+          width: vcols[0].w + vcols[1].w + vcols[2].w + vcols[3].w + vcols[4].w - 10,
+          align: 'right', lineBreak: false,
+        });
+      doc.fillColor(ROSE)
+        .text(fmtNum(totalDebit), vColX[5] + 5, y + 6, { width: vcols[5].w - 10, align: 'right', lineBreak: false });
+      doc.fillColor(GREEN)
+        .text(fmtNum(totalCredit), vColX[6] + 5, y + 6, { width: vcols[6].w - 10, align: 'right', lineBreak: false });
+      y += vTotH;
+    }
 
     // Footer note tucked above the brand footer band
     const footY = contentBottom(doc) - 24;
