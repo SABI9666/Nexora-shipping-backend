@@ -135,6 +135,76 @@ async function reconcileInvoiceStatuses(invoiceIds: string[]): Promise<void> {
   }
 }
 
+// Shared resolver: validates FK references against the schema + ownership.
+async function resolveReferences(
+  parsed: z.infer<typeof createSchema>,
+  userId: string,
+  isAdmin: boolean,
+): Promise<{ invoiceId: string | null; orderId: string | null }> {
+  let invoiceId: string | null = parsed.invoiceId || null;
+  let orderId: string | null = parsed.orderId || null;
+
+  if (parsed.referenceType === VoucherReferenceType.INVOICE) {
+    if (!invoiceId) throw new AppError('invoiceId is required when referenceType is INVOICE', 400);
+    const inv = await prisma.invoice.findFirst({
+      where: { id: invoiceId, ...(isAdmin ? {} : { userId }) },
+    });
+    if (!inv) throw new AppError('Invoice not found or access denied', 404);
+    orderId = null;
+  } else if (parsed.referenceType === VoucherReferenceType.ORDER) {
+    if (!orderId) throw new AppError('orderId is required when referenceType is ORDER', 400);
+    const ord = await prisma.order.findFirst({
+      where: { id: orderId, ...(isAdmin ? {} : { userId }) },
+    });
+    if (!ord) throw new AppError('Order not found or access denied', 404);
+    invoiceId = null;
+  } else {
+    invoiceId = null;
+    orderId = null;
+  }
+
+  if (parsed.accountId) {
+    const acc = await prisma.account.findUnique({ where: { id: parsed.accountId } });
+    if (!acc) throw new AppError('Party account not found', 404);
+  }
+  if (parsed.contraAccountId) {
+    const acc = await prisma.account.findUnique({ where: { id: parsed.contraAccountId } });
+    if (!acc) throw new AppError('Contra account not found', 404);
+  }
+  if (parsed.bankAccountId) {
+    const bank = await prisma.bankAccount.findUnique({ where: { id: parsed.bankAccountId } });
+    if (!bank) throw new AppError('Bank account not found', 404);
+  }
+  if (parsed.collectedRepId) {
+    const rep = await prisma.salesperson.findUnique({ where: { id: parsed.collectedRepId } });
+    if (!rep) throw new AppError('Collected rep not found', 404);
+  }
+
+  return { invoiceId, orderId };
+}
+
+function buildAllocationRows(parsed: z.infer<typeof createSchema>) {
+  const allocations = (parsed.allocations ?? []).filter((a) =>
+    a.allocatedAmount !== 0 || a.billAmount !== 0,
+  );
+  let runningRecd = 0;
+  const rows = allocations.map((a) => {
+    runningRecd += a.allocatedAmount;
+    return {
+      invoiceId: a.invoiceId || null,
+      jobNo: a.jobNo || null,
+      refNo: a.refNo || null,
+      invoiceNumber: a.invoiceNumber || null,
+      invoiceDate: parseDate(a.invoiceDate),
+      billAmount: a.billAmount,
+      allocatedAmount: a.allocatedAmount,
+      balanceAfter: a.billAmount - a.allocatedAmount,
+      remarks: a.remarks || null,
+    };
+  });
+  return { rows, runningRecd };
+}
+
 export const createVoucher = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     if (typeof req.body.allocations === 'string') {
@@ -144,48 +214,11 @@ export const createVoucher = async (req: AuthRequest, res: Response, next: NextF
     const direction = parsed.direction ?? DEFAULT_DIRECTION[parsed.type];
     const isAdmin = req.user!.role === Role.ADMIN;
 
-    let invoiceId: string | null = parsed.invoiceId || null;
-    let orderId: string | null = parsed.orderId || null;
+    const { invoiceId, orderId } = await resolveReferences(parsed, req.user!.id, isAdmin);
     const accountId: string | null = parsed.accountId || null;
     const contraAccountId: string | null = parsed.contraAccountId || null;
     const bankAccountId: string | null = parsed.bankAccountId || null;
     const collectedRepId: string | null = parsed.collectedRepId || null;
-
-    if (parsed.referenceType === VoucherReferenceType.INVOICE) {
-      if (!invoiceId) throw new AppError('invoiceId is required when referenceType is INVOICE', 400);
-      const inv = await prisma.invoice.findFirst({
-        where: { id: invoiceId, ...(isAdmin ? {} : { userId: req.user!.id }) },
-      });
-      if (!inv) throw new AppError('Invoice not found or access denied', 404);
-      orderId = null;
-    } else if (parsed.referenceType === VoucherReferenceType.ORDER) {
-      if (!orderId) throw new AppError('orderId is required when referenceType is ORDER', 400);
-      const ord = await prisma.order.findFirst({
-        where: { id: orderId, ...(isAdmin ? {} : { userId: req.user!.id }) },
-      });
-      if (!ord) throw new AppError('Order not found or access denied', 404);
-      invoiceId = null;
-    } else {
-      invoiceId = null;
-      orderId = null;
-    }
-
-    if (accountId) {
-      const acc = await prisma.account.findUnique({ where: { id: accountId } });
-      if (!acc) throw new AppError('Party account not found', 404);
-    }
-    if (contraAccountId) {
-      const acc = await prisma.account.findUnique({ where: { id: contraAccountId } });
-      if (!acc) throw new AppError('Contra account not found', 404);
-    }
-    if (bankAccountId) {
-      const bank = await prisma.bankAccount.findUnique({ where: { id: bankAccountId } });
-      if (!bank) throw new AppError('Bank account not found', 404);
-    }
-    if (collectedRepId) {
-      const rep = await prisma.salesperson.findUnique({ where: { id: collectedRepId } });
-      if (!rep) throw new AppError('Collected rep not found', 404);
-    }
 
     const fileMeta: FileMeta = {};
     if (req.file) {
@@ -202,25 +235,7 @@ export const createVoucher = async (req: AuthRequest, res: Response, next: NextF
       fileMeta.gcsPath = gcsPath;
     }
 
-    const allocations = (parsed.allocations ?? []).filter((a) =>
-      a.allocatedAmount !== 0 || a.billAmount !== 0,
-    );
-    let runningRecd = 0;
-    const allocationRows = allocations.map((a) => {
-      runningRecd += a.allocatedAmount;
-      return {
-        invoiceId: a.invoiceId || null,
-        jobNo: a.jobNo || null,
-        refNo: a.refNo || null,
-        invoiceNumber: a.invoiceNumber || null,
-        invoiceDate: parseDate(a.invoiceDate),
-        billAmount: a.billAmount,
-        allocatedAmount: a.allocatedAmount,
-        balanceAfter: a.billAmount - a.allocatedAmount,
-        remarks: a.remarks || null,
-      };
-    });
-
+    const { rows: allocationRows, runningRecd } = buildAllocationRows(parsed);
     const finalAmount = parsed.amount || runningRecd;
 
     let voucher;
@@ -280,6 +295,118 @@ export const createVoucher = async (req: AuthRequest, res: Response, next: NextF
     }
 
     res.status(201).json({ success: true, message: 'Voucher created', data: voucher });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ success: false, message: error.errors[0].message });
+      return;
+    }
+    next(error);
+  }
+};
+
+// Edit an existing voucher. Allocations are replaced wholesale; invoice
+// statuses are reconciled for both the previously-linked invoices and the
+// newly-linked ones so the SOA / receivables reports stay correct.
+export const updateVoucher = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    if (typeof req.body.allocations === 'string') {
+      try { req.body.allocations = JSON.parse(req.body.allocations); } catch { /* leave to fail validation */ }
+    }
+    const parsed = createSchema.parse(req.body);
+    const direction = parsed.direction ?? DEFAULT_DIRECTION[parsed.type];
+    const isAdmin = req.user!.role === Role.ADMIN;
+
+    const existing = await prisma.voucher.findFirst({
+      where: { id: req.params.id, ...(isAdmin ? {} : { userId: req.user!.id }) },
+      include: { allocations: { select: { invoiceId: true } } },
+    });
+    if (!existing) throw new AppError('Voucher not found', 404);
+
+    const { invoiceId, orderId } = await resolveReferences(parsed, req.user!.id, isAdmin);
+    const accountId: string | null = parsed.accountId || null;
+    const contraAccountId: string | null = parsed.contraAccountId || null;
+    const bankAccountId: string | null = parsed.bankAccountId || null;
+    const collectedRepId: string | null = parsed.collectedRepId || null;
+
+    // Optional new attachment — replaces the old one if provided.
+    const fileMeta: FileMeta = {};
+    let replacedFile = false;
+    if (req.file) {
+      const { url, gcsPath } = await uploadFileToGCS(
+        req.file.buffer,
+        req.file.originalname,
+        req.file.mimetype,
+        `vouchers/${req.user!.id}`,
+      );
+      fileMeta.fileUrl = url;
+      fileMeta.fileName = req.file.originalname;
+      fileMeta.fileMimeType = req.file.mimetype;
+      fileMeta.fileSize = req.file.size;
+      fileMeta.gcsPath = gcsPath;
+      replacedFile = true;
+    }
+
+    const { rows: allocationRows, runningRecd } = buildAllocationRows(parsed);
+    const finalAmount = parsed.amount || runningRecd;
+
+    // Capture invoice IDs touched BEFORE the edit so removed links still reconcile.
+    const invoiceIdsToReconcile = new Set<string>();
+    if (existing.invoiceId) invoiceIdsToReconcile.add(existing.invoiceId);
+    existing.allocations.forEach((a) => { if (a.invoiceId) invoiceIdsToReconcile.add(a.invoiceId); });
+
+    const updated = await prisma.$transaction(async (tx) => {
+      await tx.voucherAllocation.deleteMany({ where: { voucherId: existing.id } });
+      return tx.voucher.update({
+        where: { id: existing.id },
+        data: {
+          type: parsed.type,
+          direction,
+          voucherDate: parseDate(parsed.voucherDate) ?? existing.voucherDate,
+          amount: finalAmount,
+          currency: parsed.currency,
+          referenceType: parsed.referenceType,
+          invoiceId,
+          orderId,
+          accountId,
+          contraAccountId,
+          bankAccountId,
+          collectedRepId,
+          partyName: parsed.partyName || null,
+          issuedTo: parsed.issuedTo || null,
+          narration: parsed.narration || null,
+          paymentMethod: parsed.paymentMethod ?? null,
+          chequeNumber: parsed.chequeNumber || null,
+          chequeDate: parseDate(parsed.chequeDate),
+          presentOn: parseDate(parsed.presentOn),
+          clearedOn: parseDate(parsed.clearedOn),
+          accountPayee: parsed.accountPayee ?? false,
+          printCheque: parsed.printCheque ?? false,
+          againstType: parsed.againstType || null,
+          ...(replacedFile ? {
+            fileUrl: fileMeta.fileUrl ?? null,
+            fileName: fileMeta.fileName ?? null,
+            fileMimeType: fileMeta.fileMimeType ?? null,
+            fileSize: fileMeta.fileSize ?? null,
+            gcsPath: fileMeta.gcsPath ?? null,
+          } : {}),
+          ...(allocationRows.length ? { allocations: { create: allocationRows } } : {}),
+        },
+        include: VOUCHER_INCLUDE,
+      });
+    });
+
+    // Drop the old GCS object after the DB commit if it was replaced.
+    if (replacedFile && existing.gcsPath) {
+      try { await deleteFileFromGCS(existing.gcsPath); } catch { /* ignore */ }
+    }
+
+    if (updated.invoiceId) invoiceIdsToReconcile.add(updated.invoiceId);
+    allocationRows.forEach((a) => { if (a.invoiceId) invoiceIdsToReconcile.add(a.invoiceId); });
+    if (invoiceIdsToReconcile.size > 0) {
+      await reconcileInvoiceStatuses(Array.from(invoiceIdsToReconcile));
+    }
+
+    res.json({ success: true, message: 'Voucher updated', data: updated });
   } catch (error) {
     if (error instanceof z.ZodError) {
       res.status(400).json({ success: false, message: error.errors[0].message });
