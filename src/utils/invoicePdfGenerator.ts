@@ -30,6 +30,7 @@ export type InvoiceForPdf = {
   billToCountry: string;
   billToEmail: string | null;
   billToPhone: string | null;
+  customerTrn?: string | null;
   shipFromName: string;
   shipFromAddress: string;
   shipFromCity: string;
@@ -181,6 +182,14 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     if (invoice.billToPhone) {
       doc.fillColor(MUTED).font('Helvetica').fontSize(9)
         .text(inline(invoice.billToPhone), billX, y + billLine, { width: colW, lineBreak: false, ellipsis: true });
+      billLine += 12;
+    }
+    // Customer TRN — pulled from the linked Account Master record. Shown
+    // bold navy so the buyer's tax number is clear on the VAT invoice.
+    if (invoice.customerTrn) {
+      doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(9.5)
+        .text(`TRN: ${inline(invoice.customerTrn)}`, billX, y + billLine, { width: colW, lineBreak: false, ellipsis: true });
+      billLine += 12;
     }
 
     // JOB DETAILS — assemble only fields that have a value (no blank rows).
@@ -220,8 +229,8 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     });
 
     // Both columns must end at the same baseline. Block grows to fit the
-    // taller column (BILL TO ≈ 100pt vs JOB DETAILS up to 10 × 13 + 16).
-    const blockBottom = Math.max(y + 100, jy + 4);
+    // taller column (BILL TO ≈ 112pt with TRN vs JOB DETAILS up to 10 × 13 + 16).
+    const blockBottom = Math.max(y + 116, jy + 4);
     y = blockBottom;
     doc.lineWidth(0.6).strokeColor(DIVIDER).moveTo(left, y).lineTo(right, y).stroke();
     y += 14;
