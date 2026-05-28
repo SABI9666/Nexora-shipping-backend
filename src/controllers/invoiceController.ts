@@ -131,8 +131,16 @@ function calcTotals(enriched: EnrichedItem[], shippingCost: number) {
 const INVOICE_INCLUDE = {
   items: true,
   orderRef: { select: { id: true, orderNumber: true, status: true } },
-  account: { select: { id: true, code: true, name: true, accountGroup: { select: { name: true, groupType: true } } } },
+  account: { select: { id: true, code: true, name: true, trn: true, accountGroup: { select: { name: true, groupType: true } } } },
   user: { select: { id: true, firstName: true, lastName: true, email: true } },
+} as const;
+
+// Include used by the PDF / Word download endpoints — pulls the linked
+// account's TRN so it can be printed in the BILL TO block.
+const INVOICE_DOWNLOAD_INCLUDE = {
+  items: true,
+  orderRef: { select: { orderNumber: true } },
+  account: { select: { trn: true, name: true } },
 } as const;
 
 export const createInvoice = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
@@ -417,15 +425,13 @@ export const downloadInvoiceWord = async (req: AuthRequest, res: Response, next:
 
     const invoice = await prisma.invoice.findFirst({
       where: { id, ...(isAdmin ? {} : { userId: req.user!.id }) },
-      include: {
-        items: true,
-        orderRef: { select: { orderNumber: true } },
-      },
+      include: INVOICE_DOWNLOAD_INCLUDE,
     });
 
     if (!invoice) throw new AppError('Invoice not found', 404);
 
-    const buffer = await generateInvoiceWordBuffer(invoice);
+    const wordData = { ...invoice, customerTrn: invoice.account?.trn ?? null };
+    const buffer = await generateInvoiceWordBuffer(wordData);
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     res.setHeader('Content-Disposition', `attachment; filename="${invoice.invoiceNumber}.docx"`);
@@ -442,15 +448,13 @@ export const downloadInvoicePdf = async (req: AuthRequest, res: Response, next: 
 
     const invoice = await prisma.invoice.findFirst({
       where: { id, ...(isAdmin ? {} : { userId: req.user!.id }) },
-      include: {
-        items: true,
-        orderRef: { select: { orderNumber: true } },
-      },
+      include: INVOICE_DOWNLOAD_INCLUDE,
     });
 
     if (!invoice) throw new AppError('Invoice not found', 404);
 
-    const buffer = await generateInvoicePdfBuffer(invoice);
+    const pdfData = { ...invoice, customerTrn: invoice.account?.trn ?? null };
+    const buffer = await generateInvoicePdfBuffer(pdfData);
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${invoice.invoiceNumber}.pdf"`);

@@ -70,6 +70,7 @@ export type WordInvoice = {
   billToCountry: string;
   billToEmail?: string | null;
   billToPhone?: string | null;
+  customerTrn?: string | null;
   shipFromName: string;
   shipFromAddress: string;
   shipFromCity: string;
@@ -151,6 +152,7 @@ export async function generateInvoiceWordBuffer(invoice: WordInvoice): Promise<B
               new Paragraph({ children: [new TextRun({ text: `${invoice.billToCity}, ${invoice.billToCountry}`, size: 22, color: C.SLATE, font: 'Arial' })] }),
               ...(invoice.billToEmail ? [new Paragraph({ children: [new TextRun({ text: invoice.billToEmail, size: 20, color: C.LIGHT_SLATE, font: 'Arial' })] })] : []),
               ...(invoice.billToPhone ? [new Paragraph({ children: [new TextRun({ text: invoice.billToPhone, size: 20, color: C.LIGHT_SLATE, font: 'Arial' })] })] : []),
+              ...(invoice.customerTrn ? [new Paragraph({ children: [new TextRun({ text: `TRN: ${invoice.customerTrn}`, bold: true, size: 20, color: C.NAVY, font: 'Arial' })] })] : []),
             ],
           }),
         ],
