@@ -254,7 +254,7 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       { key: 'desc',    label: 'DESCRIPTION', w: fullW * 0.32, align: 'left' as const },
       { key: 'qty',     label: 'QTY',         w: fullW * 0.06, align: 'right' as const },
       { key: 'rate',    label: 'RATE',        w: fullW * 0.10, align: 'right' as const },
-      { key: 'vat',     label: 'VAT %',       w: fullW * 0.06, align: 'right' as const },
+      { key: 'vat',     label: 'VAT%',        w: fullW * 0.06, align: 'right' as const },
       { key: 'vatAmt',  label: 'VAT AMT',     w: fullW * 0.10, align: 'right' as const },
       { key: 'amt',     label: 'AMOUNT',      w: fullW * 0.14, align: 'right' as const },
       { key: 'remarks', label: 'REMARKS',     w: fullW * 0.22, align: 'left' as const },
@@ -441,11 +441,13 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       y += advance;
     };
 
-    // AED equivalent helper — returns "≈ AED X" or null when invoice
-    // currency already IS AED (no need to convert).
+    // AED equivalent helper — returns "(AED X)" or null when invoice
+    // currency already IS AED (no need to convert). ASCII-only so the
+    // default Helvetica font renders it cleanly (the Unicode ≈ glyph
+    // isn't in the WinAnsi table PDFKit uses by default).
     const aedRef = (amount: number): string | null => {
       const aed = toAed(amount, invoice.currency);
-      return aed === null ? null : `≈ AED ${fmtNum(aed)}`;
+      return aed === null ? null : `(AED ${fmtNum(aed)})`;
     };
 
     drawTotalsRow('Subtotal',
@@ -526,7 +528,7 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
           });
       } else {
         doc.fillColor(SUBTLE).font('Helvetica-Oblique').fontSize(9)
-          .text('—', billX, py, { width: leftColW, lineBreak: false });
+          .text('-', billX, py, { width: leftColW, lineBreak: false });
       }
 
       let by = y + 14;
