@@ -587,15 +587,24 @@ export const getOpenBills = async (req: AuthRequest, res: Response, next: NextFu
   try {
     const accountId = req.query.accountId as string | undefined;
     if (!accountId) throw new AppError('accountId is required', 400);
+    // Optional Job filter — when the voucher modal has a Job (order)
+    // selected, narrow open bills to only the invoices linked to that
+    // order. Keeps the receipt/purchase voucher focused on one job.
+    const orderId = req.query.orderId as string | undefined;
 
     const account = await prisma.account.findUnique({ where: { id: accountId } });
     if (!account) throw new AppError('Account not found', 404);
 
     const invoices = await prisma.invoice.findMany({
       where: {
-        OR: [
-          { accountId },
-          { AND: [{ accountId: null }, { billToName: { equals: account.name, mode: 'insensitive' } }] },
+        AND: [
+          {
+            OR: [
+              { accountId },
+              { AND: [{ accountId: null }, { billToName: { equals: account.name, mode: 'insensitive' } }] },
+            ],
+          },
+          ...(orderId ? [{ orderId }] : []),
         ],
       },
       orderBy: { invoiceDate: 'asc' },
