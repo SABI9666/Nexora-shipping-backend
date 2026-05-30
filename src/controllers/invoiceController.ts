@@ -1,6 +1,6 @@
 import { Response, NextFunction } from 'express';
 import { z } from 'zod';
-import { InvoiceStatus, Role } from '@prisma/client';
+import { InvoiceStatus, Role, VoucherDirection } from '@prisma/client';
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../types';
@@ -143,6 +143,39 @@ const INVOICE_DOWNLOAD_INCLUDE = {
   account: { select: { trn: true, name: true } },
 } as const;
 
+// Lightweight voucher / allocation include used to compute paid &
+// outstanding totals per invoice on the list / detail responses.
+const PAYMENT_AGG_INCLUDE = {
+  vouchers: { select: { amount: true, direction: true } },
+  voucherAllocations: { select: { allocatedAmount: true } },
+} as const;
+
+type VoucherAggInput = {
+  total: number;
+  vouchers?: { amount: number; direction: VoucherDirection }[];
+  voucherAllocations?: { allocatedAmount: number }[];
+};
+
+// Computes paid / outstanding / paidPercent for one invoice. Mirrors the
+// SOA + Outstanding Receivables math so the figures line up across views.
+function computeBalance(inv: VoucherAggInput) {
+  const credit = (inv.vouchers ?? [])
+    .filter((v) => v.direction === VoucherDirection.CREDIT)
+    .reduce((s, v) => s + v.amount, 0);
+  const debit = (inv.vouchers ?? [])
+    .filter((v) => v.direction === VoucherDirection.DEBIT)
+    .reduce((s, v) => s + v.amount, 0);
+  const allocated = (inv.voucherAllocations ?? [])
+    .reduce((s, a) => s + a.allocatedAmount, 0);
+  const paid = round2(credit + allocated);
+  const adjustments = round2(debit);
+  const outstanding = round2(inv.total + debit - credit - allocated);
+  const paidPercent = inv.total > 0
+    ? Math.max(0, Math.min(100, Math.round(((credit + allocated) / inv.total) * 100)))
+    : 0;
+  return { paid, adjustments, outstanding, paidPercent };
+}
+
 export const createInvoice = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const data = createInvoiceSchema.parse(req.body);
@@ -284,14 +317,22 @@ export const getInvoices = async (req: AuthRequest, res: Response, next: NextFun
         where,
         ...paginate(page, limit),
         orderBy: { createdAt: 'desc' },
-        include: INVOICE_INCLUDE,
+        include: { ...INVOICE_INCLUDE, ...PAYMENT_AGG_INCLUDE },
       }),
       prisma.invoice.count({ where }),
     ]);
 
+    // Strip the heavy voucher arrays and attach computed balance fields so
+    // the frontend list can render Paid / Outstanding / % alongside Total.
+    const data = invoices.map((inv) => {
+      const balance = computeBalance(inv);
+      const { vouchers: _v, voucherAllocations: _va, ...rest } = inv;
+      return { ...rest, ...balance };
+    });
+
     res.json({
       success: true,
-      data: invoices,
+      data,
       meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
     });
   } catch (error) {
@@ -306,11 +347,14 @@ export const getInvoice = async (req: AuthRequest, res: Response, next: NextFunc
 
     const invoice = await prisma.invoice.findFirst({
       where: { id, ...(isAdmin ? {} : { userId: req.user!.id }) },
-      include: INVOICE_INCLUDE,
+      include: { ...INVOICE_INCLUDE, ...PAYMENT_AGG_INCLUDE },
     });
 
     if (!invoice) throw new AppError('Invoice not found', 404);
-    res.json({ success: true, data: invoice });
+
+    const balance = computeBalance(invoice);
+    const { vouchers: _v, voucherAllocations: _va, ...rest } = invoice;
+    res.json({ success: true, data: { ...rest, ...balance } });
   } catch (error) {
     next(error);
   }
