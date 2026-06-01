@@ -65,12 +65,23 @@ export interface JobProfitData {
   };
 }
 
-interface Col { label: string; w: number; align: 'left' | 'right' }
+// Each column can opt-in to wrapping via `wrap: true`. Wrapping columns
+// grow the row when text overflows. Non-wrapping columns stay on a
+// single line (lineBreak:false + ellipsis) so numbers never break.
+interface Col {
+  label: string;
+  w: number;
+  align: 'left' | 'right';
+  wrap?: boolean;
+}
+
+const ROW_PAD_Y = 5;
+const MIN_ROW_H = 18;
 
 function drawSectionHeader(doc: Doc, x: number, y: number, w: number, title: string) {
-  doc.fillColor(NAVY).rect(x, y, w, 18).fill();
+  doc.fillColor(NAVY).rect(x, y, w, 20).fill();
   doc.fillColor(WHITE).font('Helvetica-Bold').fontSize(9.5)
-    .text(title, x + 8, y + 5, { width: w - 16, lineBreak: false, characterSpacing: 1.2 });
+    .text(title, x + 8, y + 6, { width: w - 16, lineBreak: false, characterSpacing: 1.2, ellipsis: true });
 }
 
 function drawTableHead(doc: Doc, x: number, y: number, cols: Col[]): number {
@@ -79,7 +90,7 @@ function drawTableHead(doc: Doc, x: number, y: number, cols: Col[]): number {
   let cx = x;
   doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(7.5);
   cols.forEach((c) => {
-    doc.text(c.label, cx + 4, y + 6, {
+    doc.text(c.label, cx + 4, y + 7, {
       width: c.w - 8, align: c.align, lineBreak: false, characterSpacing: 0.3, ellipsis: true,
     });
     cx += c.w;
@@ -88,19 +99,44 @@ function drawTableHead(doc: Doc, x: number, y: number, cols: Col[]): number {
   return y + 20;
 }
 
+// Computes the height a row needs based on which cells wrap. Non-wrap
+// cells contribute MIN_ROW_H; wrap cells contribute their measured height.
+function measureRowH(doc: Doc, cols: Col[], cells: string[]): number {
+  doc.fontSize(8.5);
+  let maxContentH = MIN_ROW_H - ROW_PAD_Y * 2;
+  cols.forEach((c, i) => {
+    const text = cells[i];
+    if (!text || !c.wrap) return;
+    const padX = c.align === 'left' ? 8 : 4;
+    doc.font('Helvetica');
+    const h = doc.heightOfString(text, { width: c.w - padX, align: c.align });
+    if (h > maxContentH) maxContentH = h;
+  });
+  return Math.max(MIN_ROW_H, maxContentH + ROW_PAD_Y * 2);
+}
+
 function drawDataRow(doc: Doc, x: number, y: number, cols: Col[], cells: string[], alt: boolean): number {
+  const rowH = measureRowH(doc, cols, cells);
   const w = cols.reduce((s, c) => s + c.w, 0);
-  const rowH = 18;
   if (alt) doc.fillColor(ROW_ALT).rect(x, y, w, rowH).fill();
   let cx = x;
   doc.fontSize(8.5);
   cols.forEach((c, i) => {
     const last = i === cols.length - 1;
     doc.font(last ? 'Helvetica-Bold' : 'Helvetica').fillColor(last ? NAVY : TEXT);
-    doc.text(cells[i] ?? '', cx + (c.align === 'left' ? 4 : 0), y + 5, {
-      width: c.w - (c.align === 'left' ? 8 : 4),
-      align: c.align, lineBreak: false, ellipsis: true,
-    });
+    const padLeft = c.align === 'left' ? 4 : 0;
+    const padRight = c.align === 'left' ? 8 : 4;
+    if (c.wrap) {
+      // Allow natural wrapping; cell height already reserved above.
+      doc.text(cells[i] ?? '', cx + padLeft, y + ROW_PAD_Y, {
+        width: c.w - padRight, align: c.align,
+      });
+    } else {
+      // Single-line — never break, truncate with ellipsis if it overflows.
+      doc.text(cells[i] ?? '', cx + padLeft, y + ROW_PAD_Y, {
+        width: c.w - padRight, align: c.align, lineBreak: false, ellipsis: true,
+      });
+    }
     cx += c.w;
   });
   return y + rowH;
@@ -150,6 +186,7 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
     const fullW = right - left;
     let y = CONTENT_TOP;
 
+    // ===== HEADER =====
     doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(22)
       .text('JOB PROFIT STATEMENT', left, y, { width: fullW, lineBreak: false });
     y += 28;
@@ -158,6 +195,7 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
     doc.lineWidth(0.6).strokeColor(DIVIDER).moveTo(left + 92, y).lineTo(right, y).stroke();
     y += 14;
 
+    // ===== JOB INFO PANEL =====
     const infoH = 76;
     doc.fillColor(NAVY_TINT_2).rect(left, y, fullW, infoH).fill();
     doc.fillColor(NAVY).rect(left, y, 3, infoH).fill();
@@ -189,27 +227,28 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
     y += infoH + 14;
 
     // ============================================================
-    // PURCHASE section — widened Amount column so AED values fit on
-    // a single line. Currency code is dropped from the cell (it's
-    // shown in the Summary block) so the number gets the full column.
+    // PURCHASE section — currency baked into the section header so
+    // it doesn't have to be repeated in every Amount cell. Supplier
+    // / Narration cells wrap to multiple lines when needed; the row
+    // height grows to fit, so text never crosses the row border.
     // ============================================================
     y = ensureSpace(doc, y, 70);
-    drawSectionHeader(doc, left, y, fullW, 'PURCHASE - Costs against this Job');
-    y += 22;
+    const pCur = data.purchaseRows[0]?.currency || 'AED';
+    drawSectionHeader(doc, left, y, fullW, `PURCHASE  ·  Costs against this Job  ·  ${pCur}`);
+    y += 24;
 
-    // Fixed columns first, then distribute the remaining width between
-    // the variable-width columns proportionally. Amount gets ~22% of
-    // total so it comfortably fits a number like "27,200.00 AED".
-    const pFixed = 22 + 64 + 56;            // # + Voucher + Date
+    // Tighter fixed columns, wider Amount column, dynamic-height
+    // Supplier / Narration. Amount is right-aligned numeric only.
+    const pFixed = 20 + 64 + 56 + 76; // # + Voucher + Date + Amount
     const pRest = fullW - pFixed;
     const pCols: Col[] = [
-      { label: '#',             w: 22,           align: 'left'  },
-      { label: 'Voucher #',     w: 64,           align: 'left'  },
-      { label: 'Date',          w: 56,           align: 'left'  },
-      { label: 'Supplier',      w: pRest * 0.36, align: 'left'  },
-      { label: 'Ref / Sup Inv', w: pRest * 0.20, align: 'left'  },
-      { label: 'Narration',     w: pRest * 0.18, align: 'left'  },
-      { label: 'Amount',        w: pRest * 0.26, align: 'right' },
+      { label: '#',             w: 20,           align: 'left'                 },
+      { label: 'Voucher #',     w: 64,           align: 'left'                 },
+      { label: 'Date',          w: 56,           align: 'left'                 },
+      { label: 'Supplier',      w: pRest * 0.42, align: 'left',  wrap: true   },
+      { label: 'Ref / Sup Inv', w: pRest * 0.24, align: 'left'                 },
+      { label: 'Narration',     w: pRest * 0.34, align: 'left',  wrap: true   },
+      { label: 'Amount',        w: 76,           align: 'right'                },
     ];
 
     y = drawTableHead(doc, left, y, pCols);
@@ -217,7 +256,6 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
       y = drawEmptyRow(doc, left, y, fullW, 'No purchase vouchers recorded against this Job.');
     } else {
       for (let i = 0; i < data.purchaseRows.length; i++) {
-        y = ensureSpace(doc, y, 20);
         const r = data.purchaseRows[i];
         const cells = [
           String(i + 1),
@@ -226,35 +264,40 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
           (r.supplierCode ? r.supplierCode + ' - ' : '') + r.supplierName,
           r.ref || '-',
           r.narration || '-',
-          `${fmt(r.amount)} ${r.currency}`,
+          fmt(r.amount),
         ];
+        // Reserve room — measure with the live cell to avoid splitting
+        // a multi-line row across a page break.
+        const needed = measureRowH(doc, pCols, cells) + 2;
+        y = ensureSpace(doc, y, needed);
         y = drawDataRow(doc, left, y, pCols, cells, i % 2 === 1);
       }
       y = ensureSpace(doc, y, 26);
-      const pCur = data.purchaseRows[0]?.currency || 'AED';
-      y = drawSubtotalRow(doc, left, y, pCols, 'Total Purchase', `${fmt(data.totals.totalPurchase)} ${pCur}`, ROSE);
+      y = drawSubtotalRow(doc, left, y, pCols, 'Total Purchase', fmt(data.totals.totalPurchase), ROSE);
     }
     y += 14;
 
     // ============================================================
-    // SALES section — same width strategy. Paid / Outstanding / Total
-    // each get ~12% of available width, enough for "41,850.00 AED".
+    // SALES section — same approach: currency in the header, no
+    // currency suffix per cell, Customer wraps if needed, financial
+    // columns wide enough for "999,999.99".
     // ============================================================
     y = ensureSpace(doc, y, 70);
-    drawSectionHeader(doc, left, y, fullW, 'SALES - Invoices issued on this Job');
-    y += 22;
+    const sCur = data.salesRows[0]?.currency || pCur;
+    drawSectionHeader(doc, left, y, fullW, `SALES  ·  Invoices issued on this Job  ·  ${sCur}`);
+    y += 24;
 
-    const sFixed = 22 + 78 + 56 + 60;       // # + Invoice + Date + Status
-    const sRest = fullW - sFixed;
+    const sFixed = 20 + 78 + 56 + 60 + 70 + 70 + 80; // # + Inv + Date + Status + Paid + Outst + Total
+    const sCustomerW = fullW - sFixed;
     const sCols: Col[] = [
-      { label: '#',           w: 22,           align: 'left'  },
-      { label: 'Invoice #',   w: 78,           align: 'left'  },
-      { label: 'Date',        w: 56,           align: 'left'  },
-      { label: 'Customer',    w: sRest * 0.38, align: 'left'  },
-      { label: 'Status',      w: 60,           align: 'left'  },
-      { label: 'Paid',        w: sRest * 0.20, align: 'right' },
-      { label: 'Outstanding', w: sRest * 0.20, align: 'right' },
-      { label: 'Total',       w: sRest * 0.22, align: 'right' },
+      { label: '#',           w: 20,                            align: 'left'                },
+      { label: 'Invoice #',   w: 78,                            align: 'left'                },
+      { label: 'Date',        w: 56,                            align: 'left'                },
+      { label: 'Customer',    w: Math.max(120, sCustomerW),     align: 'left', wrap: true   },
+      { label: 'Status',      w: 60,                            align: 'left'                },
+      { label: 'Paid',        w: 70,                            align: 'right'               },
+      { label: 'Outstanding', w: 70,                            align: 'right'               },
+      { label: 'Total',       w: 80,                            align: 'right'               },
     ];
 
     y = drawTableHead(doc, left, y, sCols);
@@ -262,7 +305,6 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
       y = drawEmptyRow(doc, left, y, fullW, 'No invoices issued on this Job.');
     } else {
       for (let i = 0; i < data.salesRows.length; i++) {
-        y = ensureSpace(doc, y, 20);
         const r = data.salesRows[i];
         const cells = [
           String(i + 1),
@@ -272,18 +314,20 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
           r.status,
           fmt(r.paid),
           fmt(r.outstanding),
-          `${fmt(r.total)} ${r.currency}`,
+          fmt(r.total),
         ];
+        const needed = measureRowH(doc, sCols, cells) + 2;
+        y = ensureSpace(doc, y, needed);
         y = drawDataRow(doc, left, y, sCols, cells, i % 2 === 1);
       }
       y = ensureSpace(doc, y, 26);
-      const sCur = data.salesRows[0].currency;
-      y = drawSubtotalRow(doc, left, y, sCols, 'Total Sales', `${fmt(data.totals.totalSales)} ${sCur}`, EMERALD);
+      y = drawSubtotalRow(doc, left, y, sCols, 'Total Sales', fmt(data.totals.totalSales), EMERALD);
     }
     y += 16;
 
+    // ===== SUMMARY PANEL =====
     y = ensureSpace(doc, y, 120);
-    const cur = data.salesRows[0]?.currency || data.purchaseRows[0]?.currency || 'AED';
+    const cur = sCur;
     const panelH = 100;
     doc.fillColor(NAVY_TINT_2).rect(left, y, fullW, panelH).fill();
     doc.fillColor(NAVY).rect(left, y, 4, panelH).fill();
@@ -292,14 +336,14 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
 
     const sumX = left + 16;
     const sumW = fullW - 32;
-    const labelColW = sumW * 0.55;
-    const valueColW = sumW * 0.45;
+    const sumLabelW = sumW * 0.55;
+    const sumValueW = sumW * 0.45;
     let sy = y + 30;
     const drawSumRow = (label: string, value: string, color: string, strong = false) => {
       doc.fillColor(MUTED).font('Helvetica').fontSize(strong ? 11 : 9.5)
-        .text(label, sumX, sy + (strong ? 1 : 0), { width: labelColW, lineBreak: false });
+        .text(label, sumX, sy + (strong ? 1 : 0), { width: sumLabelW, lineBreak: false });
       doc.fillColor(color).font('Helvetica-Bold').fontSize(strong ? 13 : 10.5)
-        .text(value, sumX + labelColW, sy, { width: valueColW, align: 'right', lineBreak: false, ellipsis: true });
+        .text(value, sumX + sumLabelW, sy, { width: sumValueW, align: 'right', lineBreak: false, ellipsis: true });
       sy += strong ? 22 : 14;
     };
     drawSumRow('Total Sales (S)', `${cur} ${fmt(data.totals.totalSales)}`, EMERALD);
@@ -323,7 +367,7 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
 
     y += 6;
     doc.fillColor(SUBTLE).font('Helvetica-Oblique').fontSize(8)
-      .text(`Generated ${fmtDate(new Date())} - Profit = Sales - Purchase. Computer-generated statement.`,
+      .text(`Generated ${fmtDate(new Date())}  ·  Profit = Sales - Purchase  ·  Computer-generated statement.`,
         left, y, { width: fullW, align: 'center', lineBreak: false });
 
     doc.end();
