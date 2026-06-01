@@ -135,16 +135,12 @@ const INVOICE_INCLUDE = {
   user: { select: { id: true, firstName: true, lastName: true, email: true } },
 } as const;
 
-// Include used by the PDF / Word download endpoints — pulls the linked
-// account's TRN so it can be printed in the BILL TO block.
 const INVOICE_DOWNLOAD_INCLUDE = {
   items: true,
   orderRef: { select: { orderNumber: true } },
   account: { select: { trn: true, name: true } },
 } as const;
 
-// Lightweight voucher / allocation include used to compute paid &
-// outstanding totals per invoice on the list / detail responses.
 const PAYMENT_AGG_INCLUDE = {
   vouchers: { select: { amount: true, direction: true } },
   voucherAllocations: { select: { allocatedAmount: true } },
@@ -156,8 +152,6 @@ type VoucherAggInput = {
   voucherAllocations?: { allocatedAmount: number }[];
 };
 
-// Computes paid / outstanding / paidPercent for one invoice. Mirrors the
-// SOA + Outstanding Receivables math so the figures line up across views.
 function computeBalance(inv: VoucherAggInput) {
   const credit = (inv.vouchers ?? [])
     .filter((v) => v.direction === VoucherDirection.CREDIT)
@@ -297,12 +291,14 @@ export const getInvoices = async (req: AuthRequest, res: Response, next: NextFun
     const status = req.query.status as InvoiceStatus | undefined;
     const search = req.query.search as string | undefined;
     const accountId = req.query.accountId as string | undefined;
+    const orderId = req.query.orderId as string | undefined;
     const isAdmin = req.user!.role === Role.ADMIN;
 
     const where = {
       ...(isAdmin ? {} : { userId: req.user!.id }),
       ...(status ? { status } : {}),
       ...(accountId ? { accountId } : {}),
+      ...(orderId ? { orderId } : {}),
       ...(search ? {
         OR: [
           { invoiceNumber: { contains: search, mode: 'insensitive' as const } },
@@ -322,8 +318,6 @@ export const getInvoices = async (req: AuthRequest, res: Response, next: NextFun
       prisma.invoice.count({ where }),
     ]);
 
-    // Strip the heavy voucher arrays and attach computed balance fields so
-    // the frontend list can render Paid / Outstanding / % alongside Total.
     const data = invoices.map((inv) => {
       const balance = computeBalance(inv);
       const { vouchers: _v, voucherAllocations: _va, ...rest } = inv;
