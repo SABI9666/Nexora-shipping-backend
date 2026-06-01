@@ -75,17 +75,17 @@ function drawSectionHeader(doc: Doc, x: number, y: number, w: number, title: str
 
 function drawTableHead(doc: Doc, x: number, y: number, cols: Col[]): number {
   const w = cols.reduce((s, c) => s + c.w, 0);
-  doc.fillColor(NAVY_TINT_2).rect(x, y, w, 18).fill();
+  doc.fillColor(NAVY_TINT_2).rect(x, y, w, 20).fill();
   let cx = x;
-  doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(8);
+  doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(7.5);
   cols.forEach((c) => {
-    doc.text(c.label, cx + 4, y + 5, {
-      width: c.w - 8, align: c.align, lineBreak: false, characterSpacing: 0.4,
+    doc.text(c.label, cx + 4, y + 6, {
+      width: c.w - 8, align: c.align, lineBreak: false, characterSpacing: 0.3, ellipsis: true,
     });
     cx += c.w;
   });
-  doc.lineWidth(0.7).strokeColor(NAVY).moveTo(x, y + 18).lineTo(x + w, y + 18).stroke();
-  return y + 18;
+  doc.lineWidth(0.7).strokeColor(NAVY).moveTo(x, y + 20).lineTo(x + w, y + 20).stroke();
+  return y + 20;
 }
 
 function drawDataRow(doc: Doc, x: number, y: number, cols: Col[], cells: string[], alt: boolean): number {
@@ -93,7 +93,7 @@ function drawDataRow(doc: Doc, x: number, y: number, cols: Col[], cells: string[
   const rowH = 18;
   if (alt) doc.fillColor(ROW_ALT).rect(x, y, w, rowH).fill();
   let cx = x;
-  doc.fontSize(9);
+  doc.fontSize(8.5);
   cols.forEach((c, i) => {
     const last = i === cols.length - 1;
     doc.font(last ? 'Helvetica-Bold' : 'Helvetica').fillColor(last ? NAVY : TEXT);
@@ -108,22 +108,23 @@ function drawDataRow(doc: Doc, x: number, y: number, cols: Col[], cells: string[
 
 function drawSubtotalRow(doc: Doc, x: number, y: number, cols: Col[], label: string, total: string, color: string): number {
   const w = cols.reduce((s, c) => s + c.w, 0);
-  const rowH = 22;
+  const rowH = 24;
   doc.fillColor(NAVY_TINT).rect(x, y, w, rowH).fill();
   doc.lineWidth(1).strokeColor(NAVY).moveTo(x, y).lineTo(x + w, y).stroke();
   doc.lineWidth(1).strokeColor(NAVY).moveTo(x, y + rowH).lineTo(x + w, y + rowH).stroke();
   const labelW = cols.slice(0, -1).reduce((s, c) => s + c.w, 0);
-  doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(9.5)
-    .text(label, x + 4, y + 7, { width: labelW - 8, align: 'right', lineBreak: false, characterSpacing: 0.8 });
-  doc.fillColor(color).font('Helvetica-Bold').fontSize(10.5)
-    .text(total, x + labelW, y + 6, { width: cols[cols.length - 1].w - 4, align: 'right', lineBreak: false });
+  const valueW = cols[cols.length - 1].w;
+  doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(9)
+    .text(label, x + 4, y + 8, { width: labelW - 8, align: 'right', lineBreak: false, characterSpacing: 0.6, ellipsis: true });
+  doc.fillColor(color).font('Helvetica-Bold').fontSize(10)
+    .text(total, x + labelW, y + 7, { width: valueW - 4, align: 'right', lineBreak: false, ellipsis: true });
   return y + rowH;
 }
 
 function drawEmptyRow(doc: Doc, x: number, y: number, w: number, msg: string): number {
   doc.fillColor(NAVY_TINT_2).rect(x, y, w, 28).fill();
   doc.fillColor(SUBTLE).font('Helvetica-Oblique').fontSize(9.5)
-    .text(msg, x + 8, y + 9, { width: w - 16, align: 'center', lineBreak: false });
+    .text(msg, x + 8, y + 9, { width: w - 16, align: 'center', lineBreak: false, ellipsis: true });
   return y + 28;
 }
 
@@ -191,17 +192,17 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
     drawSectionHeader(doc, left, y, fullW, 'PURCHASE - Costs against this Job');
     y += 22;
 
+    const pFixed = 22 + 64 + 56;
+    const pRest = fullW - pFixed;
     const pCols: Col[] = [
-      { label: '#',             w: 22,           align: 'left' },
-      { label: 'Voucher #',     w: 70,           align: 'left' },
-      { label: 'Date',          w: 60,           align: 'left' },
-      { label: 'Supplier',      w: fullW * 0.28, align: 'left' },
-      { label: 'Ref / Sup Inv', w: fullW * 0.18, align: 'left' },
-      { label: 'Narration',     w: fullW * 0.18, align: 'left' },
-      { label: 'Amount',        w: 0,            align: 'right' },
+      { label: '#',             w: 22,           align: 'left'  },
+      { label: 'Voucher #',     w: 64,           align: 'left'  },
+      { label: 'Date',          w: 56,           align: 'left'  },
+      { label: 'Supplier',      w: pRest * 0.36, align: 'left'  },
+      { label: 'Ref / Sup Inv', w: pRest * 0.20, align: 'left'  },
+      { label: 'Narration',     w: pRest * 0.18, align: 'left'  },
+      { label: 'Amount',        w: pRest * 0.26, align: 'right' },
     ];
-    const pFixed = pCols.slice(0, -1).reduce((s, c) => s + c.w, 0);
-    pCols[pCols.length - 1].w = fullW - pFixed;
 
     y = drawTableHead(doc, left, y, pCols);
     if (data.purchaseRows.length === 0) {
@@ -217,13 +218,13 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
           (r.supplierCode ? r.supplierCode + ' - ' : '') + r.supplierName,
           r.ref || '-',
           r.narration || '-',
-          `${r.currency} ${fmt(r.amount)}`,
+          `${fmt(r.amount)} ${r.currency}`,
         ];
         y = drawDataRow(doc, left, y, pCols, cells, i % 2 === 1);
       }
-      y = ensureSpace(doc, y, 24);
+      y = ensureSpace(doc, y, 26);
       const pCur = data.purchaseRows[0]?.currency || 'AED';
-      y = drawSubtotalRow(doc, left, y, pCols, 'Total Purchase', `${pCur} ${fmt(data.totals.totalPurchase)}`, ROSE);
+      y = drawSubtotalRow(doc, left, y, pCols, 'Total Purchase', `${fmt(data.totals.totalPurchase)} ${pCur}`, ROSE);
     }
     y += 14;
 
@@ -231,21 +232,18 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
     drawSectionHeader(doc, left, y, fullW, 'SALES - Invoices issued on this Job');
     y += 22;
 
+    const sFixed = 22 + 78 + 56 + 60;
+    const sRest = fullW - sFixed;
     const sCols: Col[] = [
-      { label: '#',           w: 22,           align: 'left' },
-      { label: 'Invoice #',   w: 90,           align: 'left' },
-      { label: 'Date',        w: 70,           align: 'left' },
-      { label: 'Customer',    w: fullW * 0.32, align: 'left' },
-      { label: 'Status',      w: 70,           align: 'left' },
-      { label: 'Paid',        w: 0,            align: 'right' },
-      { label: 'Outstanding', w: 0,            align: 'right' },
-      { label: 'Total',       w: 0,            align: 'right' },
+      { label: '#',           w: 22,           align: 'left'  },
+      { label: 'Invoice #',   w: 78,           align: 'left'  },
+      { label: 'Date',        w: 56,           align: 'left'  },
+      { label: 'Customer',    w: sRest * 0.38, align: 'left'  },
+      { label: 'Status',      w: 60,           align: 'left'  },
+      { label: 'Paid',        w: sRest * 0.20, align: 'right' },
+      { label: 'Outstanding', w: sRest * 0.20, align: 'right' },
+      { label: 'Total',       w: sRest * 0.22, align: 'right' },
     ];
-    const sFixed = sCols.slice(0, -3).reduce((s, c) => s + c.w, 0);
-    const sRemain = fullW - sFixed;
-    sCols[5].w = sRemain / 3;
-    sCols[6].w = sRemain / 3;
-    sCols[7].w = sRemain - 2 * (sRemain / 3);
 
     y = drawTableHead(doc, left, y, sCols);
     if (data.salesRows.length === 0) {
@@ -260,15 +258,15 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
           fmtDate(new Date(r.invoiceDate)),
           r.billToName,
           r.status,
-          `${r.currency} ${fmt(r.paid)}`,
-          `${r.currency} ${fmt(r.outstanding)}`,
-          `${r.currency} ${fmt(r.total)}`,
+          fmt(r.paid),
+          fmt(r.outstanding),
+          `${fmt(r.total)} ${r.currency}`,
         ];
         y = drawDataRow(doc, left, y, sCols, cells, i % 2 === 1);
       }
-      y = ensureSpace(doc, y, 24);
+      y = ensureSpace(doc, y, 26);
       const sCur = data.salesRows[0].currency;
-      y = drawSubtotalRow(doc, left, y, sCols, 'Total Sales', `${sCur} ${fmt(data.totals.totalSales)}`, EMERALD);
+      y = drawSubtotalRow(doc, left, y, sCols, 'Total Sales', `${fmt(data.totals.totalSales)} ${sCur}`, EMERALD);
     }
     y += 16;
 
@@ -289,7 +287,7 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
       doc.fillColor(MUTED).font('Helvetica').fontSize(strong ? 11 : 9.5)
         .text(label, sumX, sy + (strong ? 1 : 0), { width: labelColW, lineBreak: false });
       doc.fillColor(color).font('Helvetica-Bold').fontSize(strong ? 13 : 10.5)
-        .text(value, sumX + labelColW, sy, { width: valueColW, align: 'right', lineBreak: false });
+        .text(value, sumX + labelColW, sy, { width: valueColW, align: 'right', lineBreak: false, ellipsis: true });
       sy += strong ? 22 : 14;
     };
     drawSumRow('Total Sales (S)', `${cur} ${fmt(data.totals.totalSales)}`, EMERALD);
