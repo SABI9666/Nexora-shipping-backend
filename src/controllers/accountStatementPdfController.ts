@@ -107,7 +107,11 @@ export const accountStatementPdf = async (
         voucherNumber: `INV ${inv.invoiceNumber}`,
         type: 'INVOICE',
         reference: inv.orderRef ? `ORD ${inv.orderRef.orderNumber}` : (inv.jobNo || null),
-        narration: `Invoice to ${inv.billToName}`,
+        // The customer name is already in the panel at the top of the
+        // statement — repeating "Invoice to <full customer name>" in
+        // every row just wastes column width and forced character-by-
+        // character wrapping in the narrow Narration column.
+        narration: 'Sales invoice',
         currency: inv.currency,
         debit: inv.total,
         credit: 0,
