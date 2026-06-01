@@ -10,6 +10,7 @@ import {
   customerStatementPdf,
   dashboardSnapshot,
 } from '../controllers/reportsController';
+import { jobProfit, jobProfitPdf } from '../controllers/jobProfitController';
 
 const router = Router();
 
@@ -23,5 +24,7 @@ router.get('/outstanding-receivables', outstandingReceivables);
 router.get('/account-statement', accountStatement);
 router.get('/customer-statement', customerStatement);
 router.get('/customer-statement/pdf', customerStatementPdf);
+router.get('/job-profit', jobProfit);
+router.get('/job-profit/pdf', jobProfitPdf);
 
 export default router;
