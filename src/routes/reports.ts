@@ -12,6 +12,7 @@ import {
 } from '../controllers/reportsController';
 import { jobProfit, jobProfitPdf } from '../controllers/jobProfitController';
 import { outstandingPayables } from '../controllers/outstandingPayablesController';
+import { accountStatementPdf } from '../controllers/accountStatementPdfController';
 
 const router = Router();
 
@@ -24,6 +25,7 @@ router.get('/voucher-register', voucherRegister);
 router.get('/outstanding-receivables', outstandingReceivables);
 router.get('/outstanding-payables', outstandingPayables);
 router.get('/account-statement', accountStatement);
+router.get('/account-statement/pdf', accountStatementPdf);
 router.get('/customer-statement', customerStatement);
 router.get('/customer-statement/pdf', customerStatementPdf);
 router.get('/job-profit', jobProfit);
