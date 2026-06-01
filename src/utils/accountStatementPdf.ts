@@ -57,12 +57,20 @@ export interface AccountStatementPdfData {
   companyTrn?: string;
 }
 
-interface Col { label: string; w: number; align: 'left' | 'right' }
+interface Col {
+  label: string;
+  w: number;
+  align: 'left' | 'right';
+  wrap?: boolean;
+}
+
+const ROW_PAD_Y = 5;
+const MIN_ROW_H = 18;
 
 function drawSectionHeader(doc: Doc, x: number, y: number, w: number, title: string) {
-  doc.fillColor(NAVY).rect(x, y, w, 18).fill();
+  doc.fillColor(NAVY).rect(x, y, w, 20).fill();
   doc.fillColor(WHITE).font('Helvetica-Bold').fontSize(9.5)
-    .text(title, x + 8, y + 5, { width: w - 16, lineBreak: false, characterSpacing: 1.2 });
+    .text(title, x + 8, y + 6, { width: w - 16, lineBreak: false, characterSpacing: 1.2, ellipsis: true });
 }
 
 function drawTableHead(doc: Doc, x: number, y: number, cols: Col[]): number {
@@ -71,7 +79,7 @@ function drawTableHead(doc: Doc, x: number, y: number, cols: Col[]): number {
   let cx = x;
   doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(7.5);
   cols.forEach((c) => {
-    doc.text(c.label, cx + 4, y + 6, {
+    doc.text(c.label, cx + 4, y + 7, {
       width: c.w - 8, align: c.align, lineBreak: false, characterSpacing: 0.3, ellipsis: true,
     });
     cx += c.w;
@@ -80,9 +88,23 @@ function drawTableHead(doc: Doc, x: number, y: number, cols: Col[]): number {
   return y + 20;
 }
 
+function measureRowH(doc: Doc, cols: Col[], cells: string[]): number {
+  doc.fontSize(8);
+  let maxContentH = MIN_ROW_H - ROW_PAD_Y * 2;
+  cols.forEach((c, i) => {
+    const text = cells[i];
+    if (!text || !c.wrap) return;
+    const padX = c.align === 'left' ? 8 : 4;
+    doc.font('Helvetica');
+    const h = doc.heightOfString(text, { width: c.w - padX, align: c.align });
+    if (h > maxContentH) maxContentH = h;
+  });
+  return Math.max(MIN_ROW_H, maxContentH + ROW_PAD_Y * 2);
+}
+
 function drawDataRow(doc: Doc, x: number, y: number, cols: Col[], cells: string[], alt: boolean): number {
+  const rowH = measureRowH(doc, cols, cells);
   const w = cols.reduce((s, c) => s + c.w, 0);
-  const rowH = 16;
   if (alt) doc.fillColor(ROW_ALT).rect(x, y, w, rowH).fill();
   let cx = x;
   doc.fontSize(8);
@@ -93,10 +115,17 @@ function drawDataRow(doc: Doc, x: number, y: number, cols: Col[], cells: string[
     else if (i === 5 && cells[i]) color = ROSE;
     else if (i === 6 && cells[i]) color = EMERALD;
     doc.font(isLast ? 'Helvetica-Bold' : 'Helvetica').fillColor(color);
-    doc.text(cells[i] ?? '', cx + (c.align === 'left' ? 4 : 0), y + 4, {
-      width: c.w - (c.align === 'left' ? 8 : 4),
-      align: c.align, lineBreak: false, ellipsis: true,
-    });
+    const padLeft = c.align === 'left' ? 4 : 0;
+    const padRight = c.align === 'left' ? 8 : 4;
+    if (c.wrap) {
+      doc.text(cells[i] ?? '', cx + padLeft, y + ROW_PAD_Y, {
+        width: c.w - padRight, align: c.align,
+      });
+    } else {
+      doc.text(cells[i] ?? '', cx + padLeft, y + ROW_PAD_Y, {
+        width: c.w - padRight, align: c.align, lineBreak: false, ellipsis: true,
+      });
+    }
     cx += c.w;
   });
   return y + rowH;
@@ -104,16 +133,16 @@ function drawDataRow(doc: Doc, x: number, y: number, cols: Col[], cells: string[
 
 function drawSubtotalRow(doc: Doc, x: number, y: number, cols: Col[], label: string, total: string, color: string): number {
   const w = cols.reduce((s, c) => s + c.w, 0);
-  const rowH = 22;
+  const rowH = 24;
   doc.fillColor(NAVY_TINT).rect(x, y, w, rowH).fill();
   doc.lineWidth(1).strokeColor(NAVY).moveTo(x, y).lineTo(x + w, y).stroke();
   doc.lineWidth(1).strokeColor(NAVY).moveTo(x, y + rowH).lineTo(x + w, y + rowH).stroke();
   const labelW = cols.slice(0, -1).reduce((s, c) => s + c.w, 0);
   const valueW = cols[cols.length - 1].w;
   doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(9)
-    .text(label, x + 4, y + 7, { width: labelW - 8, align: 'right', lineBreak: false, characterSpacing: 0.6, ellipsis: true });
+    .text(label, x + 4, y + 8, { width: labelW - 8, align: 'right', lineBreak: false, characterSpacing: 0.6, ellipsis: true });
   doc.fillColor(color).font('Helvetica-Bold').fontSize(10)
-    .text(total, x + labelW, y + 6, { width: valueW - 4, align: 'right', lineBreak: false, ellipsis: true });
+    .text(total, x + labelW, y + 7, { width: valueW - 4, align: 'right', lineBreak: false, ellipsis: true });
   return y + rowH;
 }
 
@@ -154,67 +183,97 @@ export function generateAccountStatementPdfBuffer(data: AccountStatementPdfData)
     doc.lineWidth(0.6).strokeColor(DIVIDER).moveTo(left + 92, y).lineTo(right, y).stroke();
     y += 14;
 
-    const infoH = 96;
-    doc.fillColor(NAVY_TINT_2).rect(left, y, fullW, infoH).fill();
-    doc.fillColor(NAVY).rect(left, y, 3, infoH).fill();
+    const PAD_X = 12;
+    const leftColW = fullW * 0.50 - PAD_X * 2;
+    const rightColW = fullW * 0.45;
+    const rightX = left + fullW * 0.55;
 
-    doc.fillColor(MUTED).font('Helvetica').fontSize(8)
-      .text('ACCOUNT', left + 12, y + 8, { width: 80, lineBreak: false, characterSpacing: 1 });
-    doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(15)
-      .text(data.account.name, left + 12, y + 20, { width: fullW * 0.5 - 12, lineBreak: false, ellipsis: true });
-    doc.fillColor(MUTED).font('Helvetica').fontSize(9)
-      .text(data.account.code + (data.account.accountGroup ? ` · ${data.account.accountGroup}` : ''),
-        left + 12, y + 40, { width: fullW * 0.5 - 12, lineBreak: false, ellipsis: true });
-
+    doc.font('Helvetica-Bold').fontSize(14);
+    const nameH = doc.heightOfString(data.account.name, { width: leftColW });
+    const codeGroup = data.account.code + (data.account.accountGroup ? `  ·  ${data.account.accountGroup}` : '');
+    doc.font('Helvetica').fontSize(9);
+    const codeGroupH = doc.heightOfString(codeGroup, { width: leftColW, lineBreak: false });
     const contactBits = [
       data.account.trn ? `TRN ${data.account.trn}` : null,
       data.account.mobile,
       data.account.email,
     ].filter(Boolean).join('  ·  ');
+    doc.font('Helvetica').fontSize(8.5);
+    const contactH = contactBits ? doc.heightOfString(contactBits, { width: leftColW }) : 0;
+    doc.font('Helvetica').fontSize(8);
+    const addressH = data.account.address ? doc.heightOfString(data.account.address, { width: leftColW }) : 0;
+
+    const leftContentH = 12
+      + nameH + 4
+      + codeGroupH + 6
+      + (contactBits ? contactH + 4 : 0)
+      + (data.account.address ? addressH : 0);
+    const rightContentH = 12 + 14 * 3 + 20;
+    const panelH = Math.max(leftContentH, rightContentH) + 20;
+
+    doc.fillColor(NAVY_TINT_2).rect(left, y, fullW, panelH).fill();
+    doc.fillColor(NAVY).rect(left, y, 3, panelH).fill();
+
+    let ly = y + 10;
+    doc.fillColor(MUTED).font('Helvetica').fontSize(8)
+      .text('ACCOUNT', left + PAD_X, ly, { width: 80, lineBreak: false, characterSpacing: 1 });
+    ly += 12;
+
+    doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(14)
+      .text(data.account.name, left + PAD_X, ly, { width: leftColW });
+    ly += nameH + 4;
+
+    doc.fillColor(MUTED).font('Helvetica').fontSize(9)
+      .text(codeGroup, left + PAD_X, ly, { width: leftColW, lineBreak: false, ellipsis: true });
+    ly += codeGroupH + 6;
+
     if (contactBits) {
       doc.fillColor(MUTED).font('Helvetica').fontSize(8.5)
-        .text(contactBits, left + 12, y + 56, { width: fullW * 0.5 - 12, lineBreak: false, ellipsis: true });
+        .text(contactBits, left + PAD_X, ly, { width: leftColW });
+      ly += contactH + 4;
     }
     if (data.account.address) {
       doc.fillColor(MUTED).font('Helvetica').fontSize(8)
-        .text(data.account.address, left + 12, y + 72, { width: fullW * 0.5 - 12, lineBreak: false, ellipsis: true });
+        .text(data.account.address, left + PAD_X, ly, { width: leftColW });
+      ly += addressH;
     }
 
-    const rightX = left + fullW * 0.55;
-    const rightW = fullW * 0.45 - 12;
-    let ry = y + 8;
+    let ry = y + 10;
+    const KV_LABEL_W = 110;
     const drawKv = (label: string, value: string, color: string, bold = false) => {
       doc.fillColor(MUTED).font('Helvetica').fontSize(8)
-        .text(label.toUpperCase(), rightX, ry, { width: 110, lineBreak: false, characterSpacing: 0.6 });
-      doc.fillColor(color).font('Helvetica-Bold').fontSize(bold ? 12 : 10)
-        .text(value, rightX + 110, ry - (bold ? 1 : 0), { width: rightW - 110, align: 'right', lineBreak: false, ellipsis: true });
-      ry += bold ? 20 : 14;
+        .text(label.toUpperCase(), rightX, ry, { width: KV_LABEL_W, lineBreak: false, characterSpacing: 0.6 });
+      doc.fillColor(color).font('Helvetica-Bold').fontSize(bold ? 13 : 10)
+        .text(value, rightX + KV_LABEL_W, ry - (bold ? 2 : 0), {
+          width: rightColW - KV_LABEL_W - PAD_X,
+          align: 'right', lineBreak: false, ellipsis: true,
+        });
+      ry += bold ? 22 : 14;
     };
     const periodStr = data.period.from || data.period.to
-      ? `${data.period.from ? fmtDate(data.period.from) : '-'}  →  ${data.period.to ? fmtDate(data.period.to) : '-'}`
+      ? `${data.period.from ? fmtDate(data.period.from) : '-'}  to  ${data.period.to ? fmtDate(data.period.to) : '-'}`
       : 'All Time';
     drawKv('Period', periodStr, TEXT);
     drawKv('Total Debit', fmt(data.totals.totalDebit), ROSE);
     drawKv('Total Credit', fmt(data.totals.totalCredit), EMERALD);
     drawKv('Closing Balance', `${fmt(data.closing.balance)} ${data.closing.side}`, NAVY, true);
 
-    y += infoH + 14;
+    y += panelH + 14;
 
     y = ensureSpace(doc, y, 70);
-    drawSectionHeader(doc, left, y, fullW, `LEDGER - ${data.rows.length} transaction${data.rows.length === 1 ? '' : 's'}`);
-    y += 22;
+    drawSectionHeader(doc, left, y, fullW, `LEDGER  ·  ${data.rows.length} transaction${data.rows.length === 1 ? '' : 's'}`);
+    y += 24;
 
-    const fixed = 62 + 80 + 60 + 60;
-    const rest = fullW - fixed;
+    const fixedCols = 62 + 78 + 56 + 72 + 70 + 70 + 78;
     const cols: Col[] = [
-      { label: 'Date',       w: 62,           align: 'left'  },
-      { label: 'Voucher #',  w: 80,           align: 'left'  },
-      { label: 'Type',       w: 60,           align: 'left'  },
-      { label: 'Reference',  w: 60,           align: 'left'  },
-      { label: 'Narration',  w: rest * 0.34,  align: 'left'  },
-      { label: 'Debit',      w: rest * 0.22,  align: 'right' },
-      { label: 'Credit',     w: rest * 0.22,  align: 'right' },
-      { label: 'Balance',    w: rest * 0.22,  align: 'right' },
+      { label: 'Date',       w: 62, align: 'left'                 },
+      { label: 'Voucher #',  w: 78, align: 'left'                 },
+      { label: 'Type',       w: 56, align: 'left'                 },
+      { label: 'Reference',  w: 72, align: 'left', wrap: true     },
+      { label: 'Narration',  w: fullW - fixedCols, align: 'left', wrap: true },
+      { label: 'Debit',      w: 70, align: 'right'                },
+      { label: 'Credit',     w: 70, align: 'right'                },
+      { label: 'Balance',    w: 78, align: 'right'                },
     ];
 
     y = drawTableHead(doc, left, y, cols);
@@ -222,7 +281,7 @@ export function generateAccountStatementPdfBuffer(data: AccountStatementPdfData)
     if (data.opening.debit > 0 || data.opening.credit > 0) {
       const openingBalance = Math.abs(data.opening.debit - data.opening.credit);
       const openingSide = data.opening.debit >= data.opening.credit ? 'Dr' : 'Cr';
-      y = ensureSpace(doc, y, 18);
+      y = ensureSpace(doc, y, 20);
       const w = cols.reduce((s, c) => s + c.w, 0);
       doc.fillColor(NAVY_TINT).rect(left, y, w, 18).fill();
       let cx = left;
@@ -252,7 +311,6 @@ export function generateAccountStatementPdfBuffer(data: AccountStatementPdfData)
       y = drawEmptyRow(doc, left, y, fullW, 'No transactions in this period.');
     } else {
       for (let i = 0; i < data.rows.length; i++) {
-        y = ensureSpace(doc, y, 18);
         const r = data.rows[i];
         const typeShort = r.type === 'INVOICE' ? 'Invoice'
           : r.type.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
@@ -266,18 +324,20 @@ export function generateAccountStatementPdfBuffer(data: AccountStatementPdfData)
           r.credit > 0 ? fmt(r.credit) : '',
           `${fmt(r.runningBalance)} ${r.runningSide}`,
         ];
+        const needed = measureRowH(doc, cols, cells) + 2;
+        y = ensureSpace(doc, y, needed);
         y = drawDataRow(doc, left, y, cols, cells, i % 2 === 1);
       }
-      y = ensureSpace(doc, y, 26);
+      y = ensureSpace(doc, y, 28);
       y = drawSubtotalRow(doc, left, y, cols, 'Closing Balance',
         `${fmt(data.closing.balance)} ${data.closing.side}`, NAVY);
     }
     y += 14;
 
     y = ensureSpace(doc, y, 90);
-    const panelH = 76;
-    doc.fillColor(NAVY_TINT_2).rect(left, y, fullW, panelH).fill();
-    doc.fillColor(NAVY).rect(left, y, 4, panelH).fill();
+    const sumPanelH = 76;
+    doc.fillColor(NAVY_TINT_2).rect(left, y, fullW, sumPanelH).fill();
+    doc.fillColor(NAVY).rect(left, y, 4, sumPanelH).fill();
     doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(10)
       .text('SUMMARY', left + 14, y + 10, { width: 200, lineBreak: false, characterSpacing: 1.4 });
 
@@ -297,10 +357,10 @@ export function generateAccountStatementPdfBuffer(data: AccountStatementPdfData)
     sy += 2;
     drawSumKV('Closing Balance', `${fmt(data.closing.balance)} ${data.closing.side}`, NAVY, true);
 
-    y += panelH + 12;
+    y += sumPanelH + 12;
 
     doc.fillColor(SUBTLE).font('Helvetica-Oblique').fontSize(8)
-      .text(`Generated ${fmtDate(new Date())} - Computer-generated statement. Figures shown in account base currency.`,
+      .text(`Generated ${fmtDate(new Date())}  ·  Computer-generated statement  ·  Figures shown in account base currency.`,
         left, y, { width: fullW, align: 'center', lineBreak: false });
 
     doc.end();
