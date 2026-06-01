@@ -68,7 +68,6 @@ export type InvoiceForPdf = {
   orderRef?: { orderNumber: string } | null;
 };
 
-// Palette — Nexora brand: navy + red, with soft tint backgrounds.
 const NAVY = '#0a1628';
 const NAVY_SOFT = '#1e293b';
 const BRAND_RED = '#dc2626';
@@ -79,17 +78,14 @@ const DIVIDER = '#e2e8f0';
 const NAVY_TINT = '#eef2f7';
 const NAVY_TINT_2 = '#f4f7fb';
 const ROW_ALT = '#fafbfc';
-const ACCENT_BG = '#f8fafc';
-void ACCENT_BG;
+const WHITE = '#ffffff';
+void NAVY_TINT;
 
 const fmtNum = (n: number) =>
   n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtDate = (d: Date | null | undefined) =>
   d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
 
-// Reference AED conversion rates. AED is pegged to USD at 3.6725 by the
-// UAE Central Bank (fixed peg — that IS the latest rate). Other rates are
-// reasonable defaults; if you want live rates, swap the source to a feed.
 const AED_RATES: Record<string, number> = {
   USD: 3.6725,
   EUR: 4.00,
@@ -134,9 +130,6 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
 
     let y = CONTENT_TOP;
 
-    // ===================================================================
-    //  HEADER  ·  INVOICE title + meta on the right
-    // ===================================================================
     doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(28)
       .text('INVOICE', left, y, { width: fullW * 0.6, lineBreak: false });
     const trnValue = invoice.companyTrn || '105413106300003';
@@ -162,9 +155,6 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     doc.lineWidth(0.6).strokeColor(DIVIDER).moveTo(left + 92, y).lineTo(right, y).stroke();
     y += 18;
 
-    // ===================================================================
-    //  BILL TO  +  JOB DETAILS  (two columns)
-    // ===================================================================
     const colGap = 24;
     const colW = (fullW - colGap) / 2;
     const billX = left;
@@ -221,8 +211,8 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(8.5)
       .text('JOB DETAILS', jobX + 6, y, { width: colW - 6, characterSpacing: 1.2, lineBreak: false });
     const jobLabelW = 76;
-    let jy = y + 14;
-    const jobLineH = 12;
+    let jy = y + 16;
+    const jobLineH = 13;
     jobRows.slice(0, 10).forEach((r) => {
       doc.fillColor(NAVY_SOFT).font('Helvetica-Bold').fontSize(8.5)
         .text(r.label, jobX, jy, { width: jobLabelW, lineBreak: false });
@@ -238,17 +228,14 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     doc.lineWidth(0.6).strokeColor(DIVIDER).moveTo(left, y).lineTo(right, y).stroke();
     y += 14;
 
-    // ===================================================================
-    //  ITEMS TABLE
-    // ===================================================================
     const cols = [
       { key: 'desc',    label: 'DESCRIPTION', w: fullW * 0.32, align: 'left' as const },
       { key: 'qty',     label: 'QTY',         w: fullW * 0.06, align: 'right' as const },
       { key: 'rate',    label: 'RATE',        w: fullW * 0.10, align: 'right' as const },
-      { key: 'vat',     label: 'VAT %',       w: fullW * 0.06, align: 'right' as const },
+      { key: 'vat',     label: 'VAT%',        w: fullW * 0.07, align: 'right' as const },
       { key: 'vatAmt',  label: 'VAT AMT',     w: fullW * 0.10, align: 'right' as const },
       { key: 'amt',     label: 'AMOUNT',      w: fullW * 0.14, align: 'right' as const },
-      { key: 'remarks', label: 'REMARKS',     w: fullW * 0.22, align: 'left' as const },
+      { key: 'remarks', label: 'REMARKS',     w: fullW * 0.21, align: 'left' as const },
     ];
     const colX: number[] = [];
     {
@@ -256,22 +243,18 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       for (const c of cols) { colX.push(x); x += c.w; }
     }
 
-    // Tightened row metrics so up to ~12 items fit on a single page
-    // alongside the full footer.
-    const headRowH = 20;
-    const rowH = 17;
+    const headRowH = 22;
+    const rowH = 20;
 
-    // Reserve extra space when AED sub-lines under totals are shown.
-    const FOOTER_BLOCK_H =
-      96 + 14 + 84 + 38 + 20
-      + ((toAed(invoice.total, invoice.currency) !== null) ? 60 : 0);
+    const FOOTER_BLOCK_H = 96 + 14 + 84 + 38 + 20
+      + ((toAed(invoice.total, invoice.currency) !== null) ? 46 : 0);
 
     const drawTableHead = (yy: number) => {
       doc.fillColor(NAVY_TINT_2).rect(left, yy, fullW, headRowH).fill();
       doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(8);
       cols.forEach((c, i) => {
         doc.text(c.label, colX[i] + 4, yy + 7, {
-          width: c.w - 8, align: c.align, characterSpacing: 0.8, lineBreak: false,
+          width: c.w - 8, align: c.align, characterSpacing: 0.4, lineBreak: false,
         });
       });
       doc.lineWidth(1).strokeColor(NAVY)
@@ -326,8 +309,6 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
         { v: it.description,                 font: 'Helvetica',         color: TEXT },
         { v: String(it.quantity),            font: 'Helvetica',         color: TEXT },
         { v: fmtNum(it.unitPrice),           font: 'Helvetica',         color: TEXT },
-        // VAT % and VAT AMT — always show a number (0.00 when empty) so
-        // the standard tax invoice layout reads consistently across rows.
         { v: fmtNum(vatPct),                 font: 'Helvetica',         color: vatPct ? TEXT : SUBTLE },
         { v: fmtNum(vatAmt),                 font: 'Helvetica',         color: vatAmt ? TEXT : SUBTLE },
         { v: fmtNum(it.amount),              font: 'Helvetica-Bold',    color: NAVY },
@@ -352,18 +333,8 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
         y += headRowH;
       }
     });
-
-    const ensureSpace = (needed: number) => {
-      if (y + needed > contentBottom(doc)) {
-        doc.addPage();
-        y = CONTENT_TOP;
-      }
-    };
-    void ensureSpace;
     void footerOnNewPage;
 
-    // Recompute footer height to account for VAT row (always shown) + AED
-    // sub-lines + taller TOTAL DUE box when AED is shown.
     const _bankRowsForHeight: KV[] = [
       nonEmpty('Bank', invoice.bankName),
       nonEmpty('Address', invoice.bankAddress),
@@ -375,23 +346,20 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
     const _showPayment = !!invoice.paymentTerms;
     const _showBank = _bankRowsForHeight.length > 0;
     const _bankBlockH = (_showPayment || _showBank)
-      ? (12 + Math.max(_showPayment ? 12 : 0, _bankRowsForHeight.length * 11) + 6)
+      ? (14 + Math.max(_showPayment ? 14 : 0, _bankRowsForHeight.length * 12) + 12)
       : 0;
-    const _showAed = toAed(invoice.total, invoice.currency) !== null;
-    const _aedExtraH = _showAed ? (12 + 12 + 14 + (invoice.shippingCost > 0 ? 12 : 0)) : 0;
-    const _totalsRowsH = 14
-      + 14 /* VAT row always shown */
-      + (invoice.shippingCost > 0 ? 14 : 0);
-    const _totalDueBoxH = _showAed ? 36 : 22;
-    const _amountWordsH = invoice.amountInWords ? 18 : 14;
+    const _aedHere = toAed(invoice.total, invoice.currency) !== null;
+    const _totalsRowsH = 18 + 18 + (invoice.shippingCost > 0 ? 18 : 0);
+    const _aedBlockH = _aedHere ? 46 : 0;
+    const _amountWordsH = invoice.amountInWords ? 22 : 18;
     const FOOTER_TOTAL_H =
-      10 +
-      _totalsRowsH + _aedExtraH + 2 + _totalDueBoxH + 4 + 20 + 4 +
+      14 +
+      _totalsRowsH + 6 + 28 + _aedBlockH + 8 +
       _amountWordsH +
-      10 +
+      14 +
       _bankBlockH +
-      8 + 12 + 14 +
-      18 + 22;
+      12 + 14 + 16 +
+      36 + 28;
 
     if (y + FOOTER_TOTAL_H > contentBottom(doc)) {
       doc.addPage();
@@ -400,93 +368,88 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
 
     doc.lineWidth(0.6).strokeColor(DIVIDER)
       .moveTo(left, y).lineTo(right, y).stroke();
-    y += 10;
+    y += 14;
 
-    // ===================================================================
-    //  TOTALS
-    // ===================================================================
-    const totalsW = fullW * 0.42;
+    const totalsW = fullW * 0.48;
     const totalsX = right - totalsW;
+    const labelColW = totalsW * 0.50;
+    const valueColW = totalsW * 0.50;
 
-    // Extended drawTotalsRow — optional `sub` renders a small italic line
-    // below the value (used for the AED equivalent).
-    const drawTotalsRow = (
-      label: string,
-      value: string,
-      opts?: { strong?: boolean; gap?: number; sub?: string | null },
-    ) => {
-      const strong = !!opts?.strong;
-      const fontSize = strong ? 11.5 : 9;
-      doc.fillColor(strong ? NAVY : MUTED).font('Helvetica').fontSize(strong ? 9 : 9)
-        .text(label, totalsX, y + (strong ? 2 : 0), {
-          width: totalsW * 0.55, lineBreak: false,
+    const drawTotalsRow = (label: string, value: string) => {
+      doc.fillColor(MUTED).font('Helvetica').fontSize(10)
+        .text(label, totalsX, y, { width: labelColW, lineBreak: false });
+      doc.fillColor(TEXT).font('Helvetica-Bold').fontSize(10)
+        .text(value, totalsX + labelColW, y, {
+          width: valueColW, align: 'right', lineBreak: false,
         });
-      doc.fillColor(strong ? NAVY : TEXT).font('Helvetica-Bold').fontSize(fontSize)
-        .text(value, totalsX + totalsW * 0.55, y, {
-          width: totalsW * 0.45, align: 'right', lineBreak: false,
+      y += 18;
+    };
+
+    drawTotalsRow('Subtotal', `${invoice.currency} ${fmtNum(invoice.subtotal)}`);
+    drawTotalsRow(
+      `VAT${invoice.taxRate ? ` (${invoice.taxRate}%)` : ' (0%)'}`,
+      `${invoice.currency} ${fmtNum(invoice.taxAmount)}`,
+    );
+    if (invoice.shippingCost > 0) {
+      drawTotalsRow('Shipping', `${invoice.currency} ${fmtNum(invoice.shippingCost)}`);
+    }
+
+    doc.lineWidth(0.6).strokeColor(DIVIDER)
+      .moveTo(totalsX, y - 2).lineTo(right, y - 2).stroke();
+    y += 6;
+
+    const totalBandH = 28;
+    doc.fillColor(NAVY).rect(totalsX - 8, y, totalsW + 8, totalBandH).fill();
+    doc.fillColor(WHITE).font('Helvetica-Bold').fontSize(10.5)
+      .text('TOTAL DUE', totalsX, y + 10, {
+        width: labelColW, characterSpacing: 1.4, lineBreak: false,
+      });
+    doc.fillColor(WHITE).font('Helvetica-Bold').fontSize(13)
+      .text(`${invoice.currency} ${fmtNum(invoice.total)}`,
+        totalsX + labelColW, y + 8, {
+          width: valueColW, align: 'right', lineBreak: false,
         });
-      let advance = opts?.gap ?? (strong ? 20 : 14);
-      if (opts?.sub) {
-        const subY = y + (strong ? 16 : 11);
-        doc.fillColor(MUTED).font('Helvetica-Oblique').fontSize(strong ? 8.5 : 8)
-          .text(opts.sub, totalsX, subY, {
+    y += totalBandH;
+
+    const aedTotal = toAed(invoice.total, invoice.currency);
+    if (aedTotal !== null) {
+      const rate = AED_RATES[invoice.currency.toUpperCase()];
+      y += 8;
+      doc.fillColor(MUTED).font('Helvetica').fontSize(9)
+        .text('Equivalent in AED', totalsX, y, {
+          width: labelColW, lineBreak: false,
+        });
+      doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(11)
+        .text(`AED ${fmtNum(aedTotal)}`,
+          totalsX + labelColW, y - 1, {
+            width: valueColW, align: 'right', lineBreak: false,
+          });
+      y += 14;
+      doc.fillColor(SUBTLE).font('Helvetica-Oblique').fontSize(8)
+        .text(`Rate: 1 ${invoice.currency.toUpperCase()} = ${rate} AED`,
+          totalsX, y, {
             width: totalsW, align: 'right', lineBreak: false,
           });
-        advance += (strong ? 12 : 11);
-      }
-      y += advance;
-    };
-
-    const aedRef = (amount: number): string | null => {
-      const aed = toAed(amount, invoice.currency);
-      return aed === null ? null : `≈ AED ${fmtNum(aed)}`;
-    };
-
-    drawTotalsRow('Subtotal',
-      `${invoice.currency} ${fmtNum(invoice.subtotal)}`,
-      { sub: aedRef(invoice.subtotal) });
-    // VAT row — always shown (even when 0.00) so the tax invoice reads
-    // like a standard form.
-    drawTotalsRow(`VAT${invoice.taxRate ? ` (${invoice.taxRate}%)` : ''}`,
-      `${invoice.currency} ${fmtNum(invoice.taxAmount)}`,
-      { sub: aedRef(invoice.taxAmount) });
-    if (invoice.shippingCost > 0) {
-      drawTotalsRow('Shipping',
-        `${invoice.currency} ${fmtNum(invoice.shippingCost)}`,
-        { sub: aedRef(invoice.shippingCost) });
+      y += 12;
     }
-    // Emphasized Total — box height grows when AED sub-line is shown.
-    y += 2;
-    const _totalHasAed = aedRef(invoice.total) !== null;
-    const totalBoxH = _totalHasAed ? 36 : 22;
-    doc.fillColor(NAVY_TINT).rect(totalsX - 6, y, totalsW + 6, totalBoxH).fill();
-    doc.lineWidth(0.7).strokeColor(NAVY).moveTo(totalsX - 6, y).lineTo(right, y).stroke();
-    doc.lineWidth(0.7).strokeColor(NAVY).moveTo(totalsX - 6, y + totalBoxH).lineTo(right, y + totalBoxH).stroke();
-    y += 4;
-    drawTotalsRow('TOTAL DUE',
-      `${invoice.currency} ${fmtNum(invoice.total)}`,
-      { strong: true, sub: aedRef(invoice.total) });
-    y += 4;
+    y += 8;
 
     if (invoice.amountInWords) {
       const wordsW = fullW * 0.58;
-      const wordsH = 18;
-      doc.fillColor(NAVY_TINT_2).rect(left, y - 3, wordsW, wordsH).fill();
-      doc.fillColor(NAVY).rect(left, y - 3, 2.5, wordsH).fill();
-      doc.fillColor(NAVY_SOFT).font('Helvetica-Oblique').fontSize(8.5)
-        .text(invoice.amountInWords, left + 8, y, {
+      const wordsH = 22;
+      doc.fillColor(NAVY_TINT_2).rect(left, y - 4, wordsW, wordsH).fill();
+      doc.fillColor(NAVY).rect(left, y - 4, 2.5, wordsH).fill();
+      doc.fillColor(NAVY_SOFT).font('Helvetica-Oblique').fontSize(9)
+        .text(invoice.amountInWords, left + 8, y + 1, {
           width: wordsW - 12, lineBreak: false, ellipsis: true,
         });
       y += wordsH;
     } else {
-      y += 14;
+      y += 18;
     }
     doc.lineWidth(0.6).strokeColor(DIVIDER).moveTo(left, y).lineTo(right, y).stroke();
-    y += 10;
+    y += 14;
 
-    // ===================================================================
-    //  PAYMENT TERMS  +  BANK DETAILS
-    // ===================================================================
     const bankRows: KV[] = [
       nonEmpty('Bank', invoice.bankName),
       nonEmpty('Address', invoice.bankAddress),
@@ -519,55 +482,49 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
           });
       } else {
         doc.fillColor(SUBTLE).font('Helvetica-Oblique').fontSize(9)
-          .text('—', billX, py, { width: leftColW, lineBreak: false });
+          .text('-', billX, py, { width: leftColW, lineBreak: false });
       }
 
-      let by = y + 12;
+      let by = y + 14;
       const bankLabelW = 60;
       bankRows.forEach((r) => {
-        doc.fillColor(NAVY_SOFT).font('Helvetica-Bold').fontSize(8)
+        doc.fillColor(NAVY_SOFT).font('Helvetica-Bold').fontSize(8.5)
           .text(r.label, jobX, by, { width: bankLabelW, lineBreak: false });
-        doc.fillColor(TEXT).font('Helvetica').fontSize(8)
+        doc.fillColor(TEXT).font('Helvetica').fontSize(8.5)
           .text(r.value, jobX + bankLabelW, by, {
             width: rightColW - bankLabelW, lineBreak: false, ellipsis: true,
           });
-        by += 11;
+        by += 12;
       });
 
-      y = Math.max(py + 16, by + 4);
+      y = Math.max(py + 18, by + 6);
     }
 
-    // ===================================================================
-    //  SIGNATURE
-    // ===================================================================
     doc.lineWidth(0.6).strokeColor(DIVIDER).moveTo(left, y).lineTo(right, y).stroke();
-    y += 8;
+    y += 12;
     doc.fillColor(BRAND_RED).rect(left, y + 1, 2, 9).fill();
     doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(9)
       .text(`FOR ${invoice.shipFromName.toUpperCase()}`, left + 6, y, {
         width: fullW - 6, characterSpacing: 1.2, lineBreak: false, ellipsis: true,
       });
-    y += 12;
+    y += 14;
     const sigW = (fullW - colGap) / 2;
     doc.lineWidth(0.5).strokeColor(NAVY_SOFT)
-      .moveTo(left, y + 12).lineTo(left + sigW, y + 12).stroke();
-    doc.moveTo(left + sigW + colGap, y + 12).lineTo(right, y + 12).stroke();
-    doc.fillColor(NAVY_SOFT).font('Helvetica-Bold').fontSize(8)
-      .text('Prepared By', left, y + 14, { width: sigW, lineBreak: false })
-      .text('Approved By', left + sigW + colGap, y + 14, { width: sigW, lineBreak: false });
+      .moveTo(left, y + 14).lineTo(left + sigW, y + 14).stroke();
+    doc.moveTo(left + sigW + colGap, y + 14).lineTo(right, y + 14).stroke();
+    doc.fillColor(NAVY_SOFT).font('Helvetica-Bold').fontSize(8.5)
+      .text('Prepared By', left, y + 16, { width: sigW, lineBreak: false })
+      .text('Approved By', left + sigW + colGap, y + 16, { width: sigW, lineBreak: false });
 
-    // ===================================================================
-    //  DISCLAIMER
-    // ===================================================================
-    y += 30;
-    doc.fillColor(NAVY_TINT_2).rect(left, y - 2, fullW, 22).fill();
-    doc.fillColor(NAVY_SOFT).font('Helvetica').fontSize(8)
+    y += 36;
+    doc.fillColor(NAVY_TINT_2).rect(left, y - 3, fullW, 26).fill();
+    doc.fillColor(NAVY_SOFT).font('Helvetica').fontSize(8.5)
       .text(
         'In case of any discrepancy in the invoice, kindly inform immediately or within 24hrs.',
         left, y,
         { width: fullW, align: 'center', lineBreak: false, ellipsis: true },
       );
-    y += 10;
+    y += 12;
     doc.fillColor(MUTED).font('Helvetica-Oblique').fontSize(8)
       .text(
         'This is a computer-generated document and does not require a signature.',
