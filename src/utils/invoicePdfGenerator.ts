@@ -322,7 +322,7 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       8 +
       _bankBlockH +
       8 + 10 + 12 +
-      22 + 12;
+      34 + 12;
 
     if (y + FOOTER_TOTAL_H > contentBottom(doc)) {
       doc.addPage();
@@ -479,7 +479,7 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       .text('Prepared By', left, y + 14, { width: sigW, lineBreak: false })
       .text('Approved By', left + sigW + colGap, y + 14, { width: sigW, lineBreak: false });
 
-    y += 22;
+    y += 34;
     doc.fillColor(NAVY_TINT_2).rect(left, y - 3, fullW, 22).fill();
     doc.fillColor(NAVY_SOFT).font('Helvetica').fontSize(8.5)
       .text(
