@@ -11,6 +11,7 @@ import {
   dashboardSnapshot,
 } from '../controllers/reportsController';
 import { jobProfit, jobProfitPdf } from '../controllers/jobProfitController';
+import { outstandingPayables } from '../controllers/outstandingPayablesController';
 
 const router = Router();
 
@@ -21,6 +22,7 @@ router.get('/sales-summary', salesSummary);
 router.get('/orders-summary', ordersSummary);
 router.get('/voucher-register', voucherRegister);
 router.get('/outstanding-receivables', outstandingReceivables);
+router.get('/outstanding-payables', outstandingPayables);
 router.get('/account-statement', accountStatement);
 router.get('/customer-statement', customerStatement);
 router.get('/customer-statement/pdf', customerStatementPdf);
