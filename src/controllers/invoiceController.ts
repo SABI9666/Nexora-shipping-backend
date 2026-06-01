@@ -297,12 +297,16 @@ export const getInvoices = async (req: AuthRequest, res: Response, next: NextFun
     const status = req.query.status as InvoiceStatus | undefined;
     const search = req.query.search as string | undefined;
     const accountId = req.query.accountId as string | undefined;
+    // Filter to invoices linked to a specific Order (Job). Drives the
+    // Order Details page "Invoice Amount" total and the Job Profit report.
+    const orderId = req.query.orderId as string | undefined;
     const isAdmin = req.user!.role === Role.ADMIN;
 
     const where = {
       ...(isAdmin ? {} : { userId: req.user!.id }),
       ...(status ? { status } : {}),
       ...(accountId ? { accountId } : {}),
+      ...(orderId ? { orderId } : {}),
       ...(search ? {
         OR: [
           { invoiceNumber: { contains: search, mode: 'insensitive' as const } },
