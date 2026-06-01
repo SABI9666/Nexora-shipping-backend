@@ -86,9 +86,6 @@ const fmtNum = (n: number) =>
 const fmtDate = (d: Date | null | undefined) =>
   d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
 
-// Reference AED conversion rates. USD set to 3.685 per the company's
-// preferred reference rate (UAE Central Bank peg is 3.6725 but the
-// rounded 3.685 is the rate used on issued invoices).
 const AED_RATES: Record<string, number> = {
   USD: 3.685,
   EUR: 4.00,
@@ -301,11 +298,6 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       y += rowH;
     });
 
-    // Compute a tight footer-height reservation so small invoices
-    // (a few line items) stay on a single page. The previous reservation
-    // was generous and forced a page break even when there was plenty of
-    // space — the footer renders compactly enough to fit when there's
-    // room.
     const _bankRowsForHeight: KV[] = [
       nonEmpty('Bank', invoice.bankName),
       nonEmpty('Address', invoice.bankAddress),
@@ -330,7 +322,7 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       8 +                                          // divider + gap
       _bankBlockH +                                // payment + bank
       8 + 10 + 12 +                                // sig divider + label + lines
-      22 + 12;                                     // disclaimer
+      34 + 12;                                     // signature labels gap + disclaimer
 
     if (y + FOOTER_TOTAL_H > contentBottom(doc)) {
       doc.addPage();
@@ -471,6 +463,12 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       y = Math.max(py + 14, by + 4);
     }
 
+    // ============================================================
+    // SIGNATURE block — gap to the disclaimer was too tight, so the
+    // "Prepared By / Approved By" labels were overlapping the grey
+    // disclaimer bar. Increased the trailing gap so labels sit cleanly
+    // above the disclaimer.
+    // ============================================================
     doc.lineWidth(0.6).strokeColor(DIVIDER).moveTo(left, y).lineTo(right, y).stroke();
     y += 8;
     doc.fillColor(BRAND_RED).rect(left, y + 1, 2, 9).fill();
@@ -487,7 +485,10 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
       .text('Prepared By', left, y + 14, { width: sigW, lineBreak: false })
       .text('Approved By', left + sigW + colGap, y + 14, { width: sigW, lineBreak: false });
 
-    y += 22;
+    // Sig labels render from y+14 to ~y+24 (font 8.5 + descender). Need
+    // at least 10pt of breathing room before the disclaimer rect — using
+    // 34pt advance leaves ~7pt clear of the rect's top edge at y-3.
+    y += 34;
     doc.fillColor(NAVY_TINT_2).rect(left, y - 3, fullW, 22).fill();
     doc.fillColor(NAVY_SOFT).font('Helvetica').fontSize(8.5)
       .text(
