@@ -99,7 +99,7 @@ export const accountStatementPdf = async (
         voucherNumber: `INV ${inv.invoiceNumber}`,
         type: 'INVOICE',
         reference: inv.orderRef ? `ORD ${inv.orderRef.orderNumber}` : (inv.jobNo || null),
-        narration: `Invoice to ${inv.billToName}`,
+        narration: 'Sales invoice',
         currency: inv.currency,
         debit: inv.total,
         credit: 0,
