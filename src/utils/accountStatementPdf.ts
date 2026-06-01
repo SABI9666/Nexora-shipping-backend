@@ -102,7 +102,7 @@ function measureRowH(doc: Doc, cols: Col[], cells: string[]): number {
   return Math.max(MIN_ROW_H, maxContentH + ROW_PAD_Y * 2);
 }
 
-function drawDataRow(doc: Doc, x: number, y: number, cols: Col[], cells: string[], alt: boolean): number {
+function drawDataRow(doc: Doc, x: number, y: number, cols: Col[], cells: string[], alt: boolean, debitIdx: number, creditIdx: number): number {
   const rowH = measureRowH(doc, cols, cells);
   const w = cols.reduce((s, c) => s + c.w, 0);
   if (alt) doc.fillColor(ROW_ALT).rect(x, y, w, rowH).fill();
@@ -112,8 +112,8 @@ function drawDataRow(doc: Doc, x: number, y: number, cols: Col[], cells: string[
     const isLast = i === cols.length - 1;
     let color: string = TEXT;
     if (isLast) color = NAVY;
-    else if (i === 5 && cells[i]) color = ROSE;
-    else if (i === 6 && cells[i]) color = EMERALD;
+    else if (i === debitIdx && cells[i]) color = ROSE;
+    else if (i === creditIdx && cells[i]) color = EMERALD;
     doc.font(isLast ? 'Helvetica-Bold' : 'Helvetica').fillColor(color);
     const padLeft = c.align === 'left' ? 4 : 0;
     const padRight = c.align === 'left' ? 8 : 4;
@@ -184,9 +184,11 @@ export function generateAccountStatementPdfBuffer(data: AccountStatementPdfData)
     y += 14;
 
     const PAD_X = 12;
-    const leftColW = fullW * 0.50 - PAD_X * 2;
-    const rightColW = fullW * 0.45;
-    const rightX = left + fullW * 0.55;
+    const leftColW = fullW * 0.48 - PAD_X * 2;
+    const rightColW = fullW * 0.50;
+    const rightX = left + fullW * 0.50;
+    const KV_LABEL_W = 96;
+    const valueW = rightColW - KV_LABEL_W - PAD_X;
 
     doc.font('Helvetica-Bold').fontSize(14);
     const nameH = doc.heightOfString(data.account.name, { width: leftColW });
@@ -208,7 +210,14 @@ export function generateAccountStatementPdfBuffer(data: AccountStatementPdfData)
       + codeGroupH + 6
       + (contactBits ? contactH + 4 : 0)
       + (data.account.address ? addressH : 0);
-    const rightContentH = 12 + 14 * 3 + 20;
+
+    const periodStr = data.period.from || data.period.to
+      ? `${data.period.from ? fmtDate(data.period.from) : '-'}  to  ${data.period.to ? fmtDate(data.period.to) : '-'}`
+      : 'All Time';
+    doc.font('Helvetica-Bold').fontSize(10);
+    const periodValH = doc.heightOfString(periodStr, { width: valueW, align: 'right' });
+    const rightContentH = Math.max(14, periodValH + 2) + 14 + 14 + 22;
+
     const panelH = Math.max(leftContentH, rightContentH) + 20;
 
     doc.fillColor(NAVY_TINT_2).rect(left, y, fullW, panelH).fill();
@@ -239,20 +248,17 @@ export function generateAccountStatementPdfBuffer(data: AccountStatementPdfData)
     }
 
     let ry = y + 10;
-    const KV_LABEL_W = 110;
     const drawKv = (label: string, value: string, color: string, bold = false) => {
       doc.fillColor(MUTED).font('Helvetica').fontSize(8)
         .text(label.toUpperCase(), rightX, ry, { width: KV_LABEL_W, lineBreak: false, characterSpacing: 0.6 });
-      doc.fillColor(color).font('Helvetica-Bold').fontSize(bold ? 13 : 10)
-        .text(value, rightX + KV_LABEL_W, ry - (bold ? 2 : 0), {
-          width: rightColW - KV_LABEL_W - PAD_X,
-          align: 'right', lineBreak: false, ellipsis: true,
-        });
-      ry += bold ? 22 : 14;
+      doc.fillColor(color).font('Helvetica-Bold').fontSize(bold ? 13 : 10);
+      const vh = doc.heightOfString(value, { width: valueW, align: 'right' });
+      doc.text(value, rightX + KV_LABEL_W, ry - (bold ? 2 : 0), {
+        width: valueW, align: 'right',
+      });
+      const minAdvance = bold ? 22 : 14;
+      ry += Math.max(minAdvance, vh + 4);
     };
-    const periodStr = data.period.from || data.period.to
-      ? `${data.period.from ? fmtDate(data.period.from) : '-'}  to  ${data.period.to ? fmtDate(data.period.to) : '-'}`
-      : 'All Time';
     drawKv('Period', periodStr, TEXT);
     drawKv('Total Debit', fmt(data.totals.totalDebit), ROSE);
     drawKv('Total Credit', fmt(data.totals.totalCredit), EMERALD);
@@ -264,17 +270,19 @@ export function generateAccountStatementPdfBuffer(data: AccountStatementPdfData)
     drawSectionHeader(doc, left, y, fullW, `LEDGER  ·  ${data.rows.length} transaction${data.rows.length === 1 ? '' : 's'}`);
     y += 24;
 
-    const fixedCols = 62 + 78 + 56 + 72 + 70 + 70 + 78;
+    const fixedWidth = 56 + 86 + 96 + 60 + 60 + 72;
+    const narrationW = Math.max(110, fullW - fixedWidth);
     const cols: Col[] = [
-      { label: 'Date',       w: 62, align: 'left'                 },
-      { label: 'Voucher #',  w: 78, align: 'left'                 },
-      { label: 'Type',       w: 56, align: 'left'                 },
-      { label: 'Reference',  w: 72, align: 'left', wrap: true     },
-      { label: 'Narration',  w: fullW - fixedCols, align: 'left', wrap: true },
-      { label: 'Debit',      w: 70, align: 'right'                },
-      { label: 'Credit',     w: 70, align: 'right'                },
-      { label: 'Balance',    w: 78, align: 'right'                },
+      { label: 'Date',       w: 56,         align: 'left'                 },
+      { label: 'Voucher #',  w: 86,         align: 'left'                 },
+      { label: 'Reference',  w: 96,         align: 'left', wrap: true     },
+      { label: 'Narration',  w: narrationW, align: 'left', wrap: true     },
+      { label: 'Debit',      w: 60,         align: 'right'                },
+      { label: 'Credit',     w: 60,         align: 'right'                },
+      { label: 'Balance',    w: 72,         align: 'right'                },
     ];
+    const DEBIT_IDX = 4;
+    const CREDIT_IDX = 5;
 
     y = drawTableHead(doc, left, y, cols);
 
@@ -287,16 +295,18 @@ export function generateAccountStatementPdfBuffer(data: AccountStatementPdfData)
       let cx = left;
       doc.fontSize(8);
       const cells = [
-        '', '', '', '', 'Opening Balance',
+        '', '', '', 'Opening Balance',
         data.opening.debit > 0 ? fmt(data.opening.debit) : '',
         data.opening.credit > 0 ? fmt(data.opening.credit) : '',
         `${fmt(openingBalance)} ${openingSide}`,
       ];
       cols.forEach((c, i) => {
         const isLast = i === cols.length - 1;
-        const isLabel = i === 4;
+        const isLabel = i === 3;
         doc.font(isLabel || isLast ? 'Helvetica-Bold' : 'Helvetica');
-        const color: string = isLast ? NAVY : (isLabel ? NAVY : (i === 5 ? ROSE : i === 6 ? EMERALD : MUTED));
+        const color: string = isLast ? NAVY
+          : (isLabel ? NAVY
+            : (i === DEBIT_IDX ? ROSE : i === CREDIT_IDX ? EMERALD : MUTED));
         doc.fillColor(color);
         doc.text(cells[i], cx + (c.align === 'left' ? 4 : 0), y + 5, {
           width: c.w - (c.align === 'left' ? 8 : 4),
@@ -312,12 +322,9 @@ export function generateAccountStatementPdfBuffer(data: AccountStatementPdfData)
     } else {
       for (let i = 0; i < data.rows.length; i++) {
         const r = data.rows[i];
-        const typeShort = r.type === 'INVOICE' ? 'Invoice'
-          : r.type.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
         const cells = [
           fmtDate(r.date),
           r.voucherNumber,
-          typeShort,
           r.reference || '-',
           r.narration || '-',
           r.debit > 0 ? fmt(r.debit) : '',
@@ -326,7 +333,7 @@ export function generateAccountStatementPdfBuffer(data: AccountStatementPdfData)
         ];
         const needed = measureRowH(doc, cols, cells) + 2;
         y = ensureSpace(doc, y, needed);
-        y = drawDataRow(doc, left, y, cols, cells, i % 2 === 1);
+        y = drawDataRow(doc, left, y, cols, cells, i % 2 === 1, DEBIT_IDX, CREDIT_IDX);
       }
       y = ensureSpace(doc, y, 28);
       y = drawSubtotalRow(doc, left, y, cols, 'Closing Balance',
