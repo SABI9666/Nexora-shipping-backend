@@ -8,12 +8,26 @@ services:
     region: oregon
     plan: starter
     buildCommand: npm install --include=dev --no-package-lock && npm run build
-    # `prisma db push` is best-effort: if the database is unreachable
-    # (Cloud SQL stopped, firewall blocking us, etc.) we still start the
-    # server so /health stays green and Render stops crash-looping. The
-    # app itself will 500 on DB-touching routes until the DB comes back,
-    # but the deploy stabilizes.
-    startCommand: npx prisma db push --skip-generate --accept-data-loss || echo '[prisma] db push failed - starting server anyway'; npm start
+    # `prisma db push` runs on every deploy to apply schema changes.
+    # The DB occasionally refuses the first connection at boot (pool
+    # closed / Cloud SQL waking up) — retry with backoff so a transient
+    # failure does not start the server against a stale schema. Only
+    # after 5 attempts do we proceed without it so /health can come up
+    # and Render stops crash-looping.
+    startCommand: |
+      for i in 1 2 3 4 5; do
+        echo "[prisma] db push attempt $i";
+        if npx prisma db push --skip-generate --accept-data-loss; then
+          echo "[prisma] db push succeeded on attempt $i";
+          break;
+        fi;
+        if [ "$i" = "5" ]; then
+          echo "[prisma] db push failed after 5 attempts - starting server with stale schema";
+        else
+          sleep $((i * 5));
+        fi;
+      done;
+      npm start
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
