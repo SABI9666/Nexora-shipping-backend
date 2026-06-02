@@ -7,6 +7,8 @@ import { AuthRequest } from '../types';
 import { generateQuotationNumber, paginate } from '../utils/helpers';
 import { generateQuotationWordBuffer } from '../utils/quotationWordGenerator';
 import { generateQuotationPdfBuffer } from '../utils/quotationPdfGenerator';
+import { generateInvoicePdfBuffer, InvoiceForPdf } from '../utils/invoicePdfGenerator';
+import { amountToWords } from '../utils/numberToWords';
 
 const quotationItemSchema = z.object({
   description: z.string().min(1),
@@ -26,7 +28,7 @@ const createQuotationSchema = z.object({
   shipFromAddress: z.string().optional(),
   shipFromCity: z.string().optional(),
   shipFromCountry: z.string().optional(),
-  currency: z.enum(['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'INR']).default('USD'),
+  currency: z.enum(['AED', 'USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'INR', 'SAR']).default('AED'),
   taxRate: z.number().min(0).max(100).default(0),
   shippingCost: z.number().min(0).default(0),
   terms: z.string().optional(),
@@ -305,6 +307,84 @@ export const downloadQuotationPdf = async (req: AuthRequest, res: Response, next
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${quotation.quotationNumber}.pdf"`);
+    res.send(buffer);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Proforma Invoice — renders the quotation through the Nexora invoice
+// PDF template (same header, items table, totals, bank panel, signature
+// block) with the title swapped to "PROFORMA INVOICE" and the quotation
+// number prefixed with "PI-". Banking details are pulled from the
+// default bank account so the document is ready to send to the customer
+// as a payment-collection proforma.
+export const downloadQuotationProformaPdf = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const isAdmin = req.user!.role === Role.ADMIN;
+
+    const quotation = await prisma.quotation.findFirst({
+      where: { id, ...(isAdmin ? {} : { userId: req.user!.id }) },
+      include: { items: true, orderRef: { select: { orderNumber: true } } },
+    });
+    if (!quotation) throw new AppError('Quotation not found', 404);
+
+    const defaultBank = await prisma.bankAccount.findFirst({
+      where: { isDefault: true },
+    });
+
+    const proformaNumber = `PI-${quotation.quotationNumber}`;
+    const pdfData: InvoiceForPdf = {
+      documentTitle: 'PROFORMA INVOICE',
+      invoiceNumber: proformaNumber,
+      status: 'PROFORMA',
+      invoiceDate: quotation.quotationDate,
+      dueDate: quotation.validUntil,
+      billToName: quotation.billToName,
+      billToAddress: quotation.billToAddress,
+      billToCity: quotation.billToCity,
+      billToCountry: quotation.billToCountry,
+      billToEmail: quotation.billToEmail,
+      billToPhone: quotation.billToPhone,
+      shipFromName: quotation.shipFromName,
+      shipFromAddress: quotation.shipFromAddress,
+      shipFromCity: quotation.shipFromCity,
+      shipFromCountry: quotation.shipFromCountry,
+      orderRef: quotation.orderRef,
+      currency: quotation.currency,
+      subtotal: quotation.subtotal,
+      taxRate: quotation.taxRate,
+      taxAmount: quotation.taxAmount,
+      shippingCost: quotation.shippingCost,
+      total: quotation.total,
+      amountInWords: amountToWords(quotation.total, quotation.currency),
+      paymentTerms: quotation.terms,
+      notes: quotation.notes,
+      // Default bank from the master so the proforma is payment-ready.
+      companyTrn: defaultBank?.companyTrn || null,
+      bankName: defaultBank?.bankName || null,
+      bankAddress: defaultBank?.bankAddress || null,
+      accountName: defaultBank?.accountName || null,
+      accountNumber: defaultBank?.accountNumber || null,
+      iban: defaultBank?.iban || null,
+      swiftCode: defaultBank?.swiftCode || null,
+      items: quotation.items.map((it) => ({
+        description: it.description,
+        quantity: it.quantity,
+        unitPrice: it.unitPrice,
+        amount: it.amount,
+      })),
+    };
+
+    const buffer = await generateInvoicePdfBuffer(pdfData);
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${proformaNumber}.pdf"`);
     res.send(buffer);
   } catch (error) {
     next(error);

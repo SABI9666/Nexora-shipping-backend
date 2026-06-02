@@ -8,6 +8,7 @@ import {
   deleteQuotation,
   downloadQuotationWord,
   downloadQuotationPdf,
+  downloadQuotationProformaPdf,
 } from '../controllers/quotationController';
 
 const router = Router();
@@ -18,6 +19,7 @@ router.get('/', getQuotations);
 router.post('/', createQuotation);
 router.get('/:id/download/word', downloadQuotationWord);
 router.get('/:id/download/pdf', downloadQuotationPdf);
+router.get('/:id/download/proforma', downloadQuotationProformaPdf);
 router.get('/:id', getQuotation);
 router.patch('/:id', updateQuotation);
 router.delete('/:id', deleteQuotation);
