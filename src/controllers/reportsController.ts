@@ -379,6 +379,9 @@ export const accountStatement = async (req: AuthRequest, res: Response, next: Ne
       include: {
         invoice: { select: { invoiceNumber: true, total: true, currency: true } },
         order: { select: { orderNumber: true } },
+        allocations: {
+          select: { purchaseVoucher: { select: { voucherNumber: true } } },
+        },
       },
     });
 
@@ -426,7 +429,14 @@ export const accountStatement = async (req: AuthRequest, res: Response, next: Ne
     for (const v of vouchers) {
       const debit = v.direction === VoucherDirection.DEBIT ? v.amount : 0;
       const credit = v.direction === VoucherDirection.CREDIT ? v.amount : 0;
-      const ref = v.invoice ? `INV ${v.invoice.invoiceNumber}` : v.order ? `ORD ${v.order.orderNumber}` : null;
+      const linkedPurchases = Array.from(new Set(
+        (v.allocations || [])
+          .map((a) => a.purchaseVoucher?.voucherNumber)
+          .filter((n): n is string => !!n),
+      ));
+      const ref = linkedPurchases.length > 0
+        ? `VCH ${linkedPurchases.join(', ')}`
+        : v.invoice ? `INV ${v.invoice.invoiceNumber}` : v.order ? `ORD ${v.order.orderNumber}` : null;
       allRows.push({
         date: v.voucherDate,
         voucherNumber: v.voucherNumber,

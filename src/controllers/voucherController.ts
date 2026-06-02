@@ -28,6 +28,7 @@ async function generateVoucherNumber(): Promise<string> {
 
 const allocationSchema = z.object({
   invoiceId: z.string().uuid().optional().or(z.literal('')),
+  purchaseVoucherId: z.string().uuid().optional().or(z.literal('')),
   jobNo: z.string().optional(),
   refNo: z.string().optional(),
   invoiceNumber: z.string().optional(),
@@ -95,7 +96,12 @@ const VOUCHER_INCLUDE = {
   contraAccount: { include: ACCOUNT_INCLUDE },
   bankAccount: { select: { id: true, label: true, bankName: true, accountName: true, accountNumber: true, iban: true, swiftCode: true, currency: true } },
   collectedRep: { select: { id: true, code: true, name: true, phone: true, email: true } },
-  allocations: { orderBy: { createdAt: 'asc' as const } },
+  allocations: {
+    orderBy: { createdAt: 'asc' as const },
+    include: {
+      purchaseVoucher: { select: { id: true, voucherNumber: true, type: true, amount: true, voucherDate: true } },
+    },
+  },
   user: { select: { firstName: true, lastName: true, email: true } },
 } as const;
 
@@ -192,6 +198,7 @@ function buildAllocationRows(parsed: z.infer<typeof createSchema>) {
     runningRecd += a.allocatedAmount;
     return {
       invoiceId: a.invoiceId || null,
+      purchaseVoucherId: a.purchaseVoucherId || null,
       jobNo: a.jobNo || null,
       refNo: a.refNo || null,
       invoiceNumber: a.invoiceNumber || null,
@@ -637,6 +644,64 @@ export const getOpenBills = async (req: AuthRequest, res: Response, next: NextFu
         billAmount: inv.total,
         paidAmount: credit + allocated,
         balance: Math.round(balance * 100) / 100,
+      };
+    }).filter((r) => Math.abs(r.balance) > 0.005);
+
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Open Purchase Vouchers for a supplier — used by the Payment / Supplier-
+// Payment / Debit-Note modal so the user can pick the exact supplier bill
+// they are settling. Outstanding = purchase amount minus every payment
+// allocation already linked to that Purchase Voucher.
+export const getOpenPurchases = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const accountId = req.query.accountId as string | undefined;
+    if (!accountId) throw new AppError('accountId is required', 400);
+    // Optional Job filter — when a Job is selected on the voucher, only the
+    // purchase bills booked against that order are shown.
+    const orderId = req.query.orderId as string | undefined;
+
+    const account = await prisma.account.findUnique({ where: { id: accountId } });
+    if (!account) throw new AppError('Account not found', 404);
+
+    const purchases = await prisma.voucher.findMany({
+      where: {
+        type: VoucherType.PURCHASE,
+        accountId,
+        ...(orderId ? { orderId } : {}),
+      },
+      orderBy: { voucherDate: 'asc' },
+      select: {
+        id: true,
+        voucherNumber: true,
+        voucherDate: true,
+        currency: true,
+        amount: true,
+        narration: true,
+        order: { select: { orderNumber: true } },
+        allocations: { select: { refNo: true, invoiceNumber: true } },
+        paymentAllocations: { select: { allocatedAmount: true } },
+      },
+    });
+
+    const rows = purchases.map((p) => {
+      const paid = p.paymentAllocations.reduce((s, a) => s + a.allocatedAmount, 0);
+      const balance = Math.round((p.amount - paid) * 100) / 100;
+      return {
+        id: p.id,
+        voucherNumber: p.voucherNumber,
+        voucherDate: p.voucherDate,
+        currency: p.currency,
+        jobNo: p.order?.orderNumber || null,
+        refNo: p.allocations[0]?.refNo || p.allocations[0]?.invoiceNumber || null,
+        narration: p.narration,
+        billAmount: p.amount,
+        paidAmount: Math.round(paid * 100) / 100,
+        balance,
       };
     }).filter((r) => Math.abs(r.balance) > 0.005);
 

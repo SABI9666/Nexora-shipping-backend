@@ -9,6 +9,7 @@ import {
   deleteVoucher,
   getReferenceValue,
   getOpenBills,
+  getOpenPurchases,
   downloadVoucherPdf,
 } from '../controllers/voucherController';
 
@@ -18,6 +19,7 @@ router.use(authenticate);
 
 router.get('/reference', getReferenceValue);
 router.get('/open-bills', getOpenBills);
+router.get('/open-purchases', getOpenPurchases);
 router.get('/', getVouchers);
 router.post('/', upload.single('file'), createVoucher);
 router.get('/:id/download/pdf', downloadVoucherPdf);

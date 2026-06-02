@@ -547,6 +547,10 @@ model Voucher {
   bankAccount   BankAccount? @relation(fields: [bankAccountId], references: [id])
   collectedRep  Salesperson? @relation("VoucherCollectedRep", fields: [collectedRepId], references: [id])
   allocations   VoucherAllocation[]
+  // Payment / Supplier-Payment / Debit-Note allocations that settle THIS
+  // voucher when it is a Purchase Voucher. Lets reports show paid vs.
+  // outstanding per supplier bill.
+  paymentAllocations VoucherAllocation[] @relation("PurchaseVoucherAllocation")
 
   @@index([invoiceId])
   @@index([orderId])
@@ -557,23 +561,28 @@ model Voucher {
 }
 
 model VoucherAllocation {
-  id              String   @id @default(uuid())
-  voucherId       String
-  invoiceId       String?
-  jobNo           String?
-  refNo           String?
-  invoiceNumber   String?
-  invoiceDate     DateTime?
-  billAmount      Float    @default(0)
-  allocatedAmount Float    @default(0)
-  balanceAfter    Float    @default(0)
-  remarks         String?
-  createdAt       DateTime @default(now())
+  id                String   @id @default(uuid())
+  voucherId         String
+  invoiceId         String?
+  // When the parent voucher is a supplier-side Payment / Supplier-Payment /
+  // Debit-Note, this points at the Purchase Voucher this line settles.
+  purchaseVoucherId String?
+  jobNo             String?
+  refNo             String?
+  invoiceNumber     String?
+  invoiceDate       DateTime?
+  billAmount        Float    @default(0)
+  allocatedAmount   Float    @default(0)
+  balanceAfter      Float    @default(0)
+  remarks           String?
+  createdAt         DateTime @default(now())
 
-  voucher Voucher  @relation(fields: [voucherId], references: [id], onDelete: Cascade)
-  invoice Invoice? @relation("InvoiceVoucherAllocation", fields: [invoiceId], references: [id])
+  voucher         Voucher  @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+  invoice         Invoice? @relation("InvoiceVoucherAllocation", fields: [invoiceId], references: [id])
+  purchaseVoucher Voucher? @relation("PurchaseVoucherAllocation", fields: [purchaseVoucherId], references: [id])
 
   @@index([voucherId])
   @@index([invoiceId])
+  @@index([purchaseVoucherId])
   @@map("voucher_allocations")
 }

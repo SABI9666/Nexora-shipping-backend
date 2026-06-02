@@ -73,6 +73,12 @@ export const accountStatementPdf = async (
       include: {
         invoice: { select: { invoiceNumber: true, currency: true } },
         order: { select: { orderNumber: true } },
+        // Purchase Vouchers this payment settles — surfaced in the
+        // Reference column so a supplier ledger reader can trace each
+        // payment back to the exact bill it cleared.
+        allocations: {
+          select: { purchaseVoucher: { select: { voucherNumber: true } } },
+        },
       },
     });
 
@@ -110,7 +116,16 @@ export const accountStatementPdf = async (
     for (const v of vouchers) {
       const debit = v.direction === VoucherDirection.DEBIT ? v.amount : 0;
       const credit = v.direction === VoucherDirection.CREDIT ? v.amount : 0;
-      const ref = v.invoice ? `INV ${v.invoice.invoiceNumber}` : v.order ? `ORD ${v.order.orderNumber}` : null;
+      // Prefer the linked Purchase Voucher(s) on supplier-side payments,
+      // then fall back to the invoice / order reference.
+      const linkedPurchases = Array.from(new Set(
+        (v.allocations || [])
+          .map((a) => a.purchaseVoucher?.voucherNumber)
+          .filter((n): n is string => !!n),
+      ));
+      const ref = linkedPurchases.length > 0
+        ? `VCH ${linkedPurchases.join(', ')}`
+        : v.invoice ? `INV ${v.invoice.invoiceNumber}` : v.order ? `ORD ${v.order.orderNumber}` : null;
       allRows.push({
         date: v.voucherDate,
         voucherNumber: v.voucherNumber,

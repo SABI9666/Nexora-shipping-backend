@@ -46,6 +46,8 @@ export interface JobProfitData {
     narration: string;
     currency: string;
     amount: number;
+    paid?: number;
+    outstanding?: number;
   }[];
   salesRows: {
     invoiceNumber: string;
@@ -59,6 +61,8 @@ export interface JobProfitData {
   }[];
   totals: {
     totalPurchase: number;
+    totalPurchasePaid?: number;
+    totalPurchaseOutstanding?: number;
     totalSales: number;
     netProfit: number;
     totalOutstanding: number;
@@ -150,6 +154,37 @@ function drawSubtotalRow(doc: Doc, x: number, y: number, cols: Col[], label: str
   return y + rowH;
 }
 
+// Subtotal row for the Purchase table — prints three right-aligned
+// values (Amount / Paid / Outstanding) under their own columns, with the
+// "Total Purchase" label spanning the descriptive columns to the left.
+function drawPurchaseSubtotal(
+  doc: Doc, x: number, y: number, cols: Col[],
+  amount: string, paid: string, outstanding: string,
+): number {
+  const w = cols.reduce((s, c) => s + c.w, 0);
+  const rowH = 24;
+  doc.fillColor(NAVY_TINT).rect(x, y, w, rowH).fill();
+  doc.lineWidth(1).strokeColor(NAVY).moveTo(x, y).lineTo(x + w, y).stroke();
+  doc.lineWidth(1).strokeColor(NAVY).moveTo(x, y + rowH).lineTo(x + w, y + rowH).stroke();
+  // Label spans everything left of the three numeric columns.
+  const labelW = cols.slice(0, -3).reduce((s, c) => s + c.w, 0);
+  doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(9)
+    .text('Total Purchase', x + 4, y + 8, { width: labelW - 8, align: 'right', lineBreak: false, characterSpacing: 0.6, ellipsis: true });
+  const amountCol = cols[cols.length - 3];
+  const paidCol = cols[cols.length - 2];
+  const outCol = cols[cols.length - 1];
+  const amountX = x + labelW;
+  const paidX = amountX + amountCol.w;
+  const outX = paidX + paidCol.w;
+  doc.fillColor(ROSE).font('Helvetica-Bold').fontSize(10)
+    .text(amount, amountX, y + 7, { width: amountCol.w - 4, align: 'right', lineBreak: false, ellipsis: true });
+  doc.fillColor(EMERALD).font('Helvetica-Bold').fontSize(10)
+    .text(paid, paidX, y + 7, { width: paidCol.w - 4, align: 'right', lineBreak: false, ellipsis: true });
+  doc.fillColor(ROSE).font('Helvetica-Bold').fontSize(10)
+    .text(outstanding, outX, y + 7, { width: outCol.w - 4, align: 'right', lineBreak: false, ellipsis: true });
+  return y + rowH;
+}
+
 function drawEmptyRow(doc: Doc, x: number, y: number, w: number, msg: string): number {
   doc.fillColor(NAVY_TINT_2).rect(x, y, w, 28).fill();
   doc.fillColor(SUBTLE).font('Helvetica-Oblique').fontSize(9.5)
@@ -222,16 +257,23 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
     drawSectionHeader(doc, left, y, fullW, `PURCHASE  ·  Costs against this Job  ·  ${pCur}`);
     y += 24;
 
-    const pFixed = 20 + 64 + 56 + 76;
+    // Tighter fixed columns, dynamic-height Supplier / Narration. The
+    // three financial columns (Amount / Paid / Outstanding) are
+    // right-aligned numeric only so a supplier bill shows what it cost,
+    // how much has been settled by Payment vouchers, and what is still
+    // owed — the same paid/outstanding breakdown the Sales side gets.
+    const pFixed = 20 + 60 + 52 + 70 + 70 + 70; // # + Voucher + Date + Amount + Paid + Outstanding
     const pRest = fullW - pFixed;
     const pCols: Col[] = [
       { label: '#',             w: 20,           align: 'left'                 },
-      { label: 'Voucher #',     w: 64,           align: 'left'                 },
-      { label: 'Date',          w: 56,           align: 'left'                 },
-      { label: 'Supplier',      w: pRest * 0.42, align: 'left',  wrap: true   },
+      { label: 'Voucher #',     w: 60,           align: 'left'                 },
+      { label: 'Date',          w: 52,           align: 'left'                 },
+      { label: 'Supplier',      w: pRest * 0.46, align: 'left',  wrap: true   },
       { label: 'Ref / Sup Inv', w: pRest * 0.24, align: 'left'                 },
-      { label: 'Narration',     w: pRest * 0.34, align: 'left',  wrap: true   },
-      { label: 'Amount',        w: 76,           align: 'right'                },
+      { label: 'Narration',     w: pRest * 0.30, align: 'left',  wrap: true   },
+      { label: 'Amount',        w: 70,           align: 'right'                },
+      { label: 'Paid',          w: 70,           align: 'right'                },
+      { label: 'Outstanding',   w: 70,           align: 'right'                },
     ];
 
     y = drawTableHead(doc, left, y, pCols);
@@ -240,6 +282,8 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
     } else {
       for (let i = 0; i < data.purchaseRows.length; i++) {
         const r = data.purchaseRows[i];
+        const paid = r.paid ?? 0;
+        const outstanding = r.outstanding ?? (r.amount - paid);
         const cells = [
           String(i + 1),
           r.voucherNumber,
@@ -248,13 +292,20 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
           r.ref || '-',
           r.narration || '-',
           fmt(r.amount),
+          fmt(paid),
+          fmt(outstanding),
         ];
         const needed = measureRowH(doc, pCols, cells) + 2;
         y = ensureSpace(doc, y, needed);
         y = drawDataRow(doc, left, y, pCols, cells, i % 2 === 1);
       }
       y = ensureSpace(doc, y, 26);
-      y = drawSubtotalRow(doc, left, y, pCols, 'Total Purchase', fmt(data.totals.totalPurchase), ROSE);
+      // Multi-value subtotal: Amount / Paid / Outstanding under their
+      // own columns so the bottom line mirrors the column layout.
+      const pPaid = data.totals.totalPurchasePaid ?? 0;
+      const pOut = data.totals.totalPurchaseOutstanding ?? (data.totals.totalPurchase - pPaid);
+      y = drawPurchaseSubtotal(doc, left, y, pCols,
+        fmt(data.totals.totalPurchase), fmt(pPaid), fmt(pOut));
     }
     y += 14;
 
@@ -334,9 +385,20 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
       y = ensureSpace(doc, y, 26);
       doc.fillColor(BRAND_RED).rect(left, y, 3, 18).fill();
       doc.fillColor(MUTED).font('Helvetica').fontSize(9)
-        .text('Current Outstanding on this Job', left + 10, y + 5, { width: fullW * 0.6, lineBreak: false });
+        .text('Customer Outstanding on this Job (receivable)', left + 10, y + 5, { width: fullW * 0.6, lineBreak: false });
       doc.fillColor(BRAND_RED).font('Helvetica-Bold').fontSize(11)
         .text(`${cur} ${fmt(data.totals.totalOutstanding)}`, left, y + 4, { width: fullW, align: 'right', lineBreak: false });
+      y += 22;
+    }
+
+    const purchaseOutstanding = data.totals.totalPurchaseOutstanding ?? 0;
+    if (purchaseOutstanding > 0.005) {
+      y = ensureSpace(doc, y, 26);
+      doc.fillColor(ROSE).rect(left, y, 3, 18).fill();
+      doc.fillColor(MUTED).font('Helvetica').fontSize(9)
+        .text('Supplier Bills Outstanding on this Job (payable)', left + 10, y + 5, { width: fullW * 0.6, lineBreak: false });
+      doc.fillColor(ROSE).font('Helvetica-Bold').fontSize(11)
+        .text(`${cur} ${fmt(purchaseOutstanding)}`, left, y + 4, { width: fullW, align: 'right', lineBreak: false });
       y += 22;
     }
 
