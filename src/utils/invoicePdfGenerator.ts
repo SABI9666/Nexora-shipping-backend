@@ -66,6 +66,10 @@ export type InvoiceForPdf = {
   notes: string | null;
   items: InvoiceItem[];
   orderRef?: { orderNumber: string } | null;
+  // Banner title rendered at the top of the page. Defaults to 'INVOICE'
+  // for finalised tax invoices; the quotation flow passes
+  // 'PROFORMA INVOICE' so the same template is reused for proforma docs.
+  documentTitle?: string;
 };
 
 const NAVY = '#0a1628';
@@ -130,8 +134,12 @@ export function generateInvoicePdfBuffer(invoice: InvoiceForPdf): Promise<Buffer
 
     let y = CONTENT_TOP;
 
-    doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(28)
-      .text('INVOICE', left, y, { width: fullW * 0.6, lineBreak: false });
+    // Title shrinks slightly when rendering "PROFORMA INVOICE" so the
+    // longer banner doesn't collide with the TRN beneath it.
+    const title = invoice.documentTitle || 'INVOICE';
+    const titleSize = title.length > 9 ? 22 : 28;
+    doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(titleSize)
+      .text(title, left, y, { width: fullW * 0.6, lineBreak: false });
     const trnValue = invoice.companyTrn || '105413106300003';
     doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(10.5)
       .text(`TRN: ${trnValue}`, left, y + 34, {
