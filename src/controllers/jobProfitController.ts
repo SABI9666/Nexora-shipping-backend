@@ -20,6 +20,8 @@ async function buildJobProfit(orderId: string, userId: string, isAdmin: boolean)
     include: {
       account: { select: { code: true, name: true } },
       allocations: { orderBy: { createdAt: 'asc' } },
+      // Payments / Supplier-Payments / Debit-Notes settling this bill.
+      paymentAllocations: { select: { allocatedAmount: true } },
     },
     orderBy: { voucherDate: 'asc' },
   });
@@ -33,16 +35,21 @@ async function buildJobProfit(orderId: string, userId: string, isAdmin: boolean)
     orderBy: { invoiceDate: 'asc' },
   });
 
-  const purchaseRows = purchaseVouchers.map((v) => ({
-    voucherNumber: v.voucherNumber,
-    voucherDate: v.voucherDate,
-    supplierCode: v.account?.code || '',
-    supplierName: v.account?.name || v.partyName || '-',
-    ref: v.allocations[0]?.invoiceNumber || v.allocations[0]?.refNo || '',
-    narration: v.narration || '',
-    currency: v.currency,
-    amount: v.amount,
-  }));
+  const purchaseRows = purchaseVouchers.map((v) => {
+    const paid = v.paymentAllocations.reduce((s, a) => s + a.allocatedAmount, 0);
+    return {
+      voucherNumber: v.voucherNumber,
+      voucherDate: v.voucherDate,
+      supplierCode: v.account?.code || '',
+      supplierName: v.account?.name || v.partyName || '—',
+      ref: v.allocations[0]?.invoiceNumber || v.allocations[0]?.refNo || '',
+      narration: v.narration || '',
+      currency: v.currency,
+      amount: v.amount,
+      paid: Math.round(paid * 100) / 100,
+      outstanding: Math.round((v.amount - paid) * 100) / 100,
+    };
+  });
 
   const salesRows = invoices.map((i) => {
     const credits = i.vouchers
@@ -63,6 +70,8 @@ async function buildJobProfit(orderId: string, userId: string, isAdmin: boolean)
   });
 
   const totalPurchase = purchaseRows.reduce((s, r) => s + r.amount, 0);
+  const totalPurchasePaid = purchaseRows.reduce((s, r) => s + r.paid, 0);
+  const totalPurchaseOutstanding = Math.round((totalPurchase - totalPurchasePaid) * 100) / 100;
   const totalSales = salesRows.reduce((s, r) => s + r.total, 0);
   const totalOutstanding = salesRows.reduce((s, r) => s + r.outstanding, 0);
   const netProfit = totalSales - totalPurchase;
@@ -81,7 +90,10 @@ async function buildJobProfit(orderId: string, userId: string, isAdmin: boolean)
     },
     purchaseRows,
     salesRows,
-    totals: { totalPurchase, totalSales, netProfit, totalOutstanding },
+    totals: {
+      totalPurchase, totalPurchasePaid, totalPurchaseOutstanding,
+      totalSales, netProfit, totalOutstanding,
+    },
   };
 }
 
