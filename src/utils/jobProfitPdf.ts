@@ -139,27 +139,13 @@ function drawDataRow(doc: Doc, x: number, y: number, cols: Col[], cells: string[
   return y + rowH;
 }
 
-function drawSubtotalRow(doc: Doc, x: number, y: number, cols: Col[], label: string, total: string, color: string): number {
-  const w = cols.reduce((s, c) => s + c.w, 0);
-  const rowH = 24;
-  doc.fillColor(NAVY_TINT).rect(x, y, w, rowH).fill();
-  doc.lineWidth(1).strokeColor(NAVY).moveTo(x, y).lineTo(x + w, y).stroke();
-  doc.lineWidth(1).strokeColor(NAVY).moveTo(x, y + rowH).lineTo(x + w, y + rowH).stroke();
-  const labelW = cols.slice(0, -1).reduce((s, c) => s + c.w, 0);
-  const valueW = cols[cols.length - 1].w;
-  doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(9)
-    .text(label, x + 4, y + 8, { width: labelW - 8, align: 'right', lineBreak: false, characterSpacing: 0.6, ellipsis: true });
-  doc.fillColor(color).font('Helvetica-Bold').fontSize(10)
-    .text(total, x + labelW, y + 7, { width: valueW - 4, align: 'right', lineBreak: false, ellipsis: true });
-  return y + rowH;
-}
-
-// Subtotal row for the Purchase table — prints three right-aligned
-// values (Amount / Paid / Outstanding) under their own columns, with the
-// "Total Purchase" label spanning the descriptive columns to the left.
-function drawPurchaseSubtotal(
+// Subtotal row that prints three right-aligned values under the table's
+// last three columns, with a bold label spanning the descriptive columns
+// to the left. Shared by the Purchase and Sales sections so both bottom
+// lines line up on the same numeric grid.
+function drawTripleSubtotal(
   doc: Doc, x: number, y: number, cols: Col[],
-  amount: string, paid: string, outstanding: string,
+  label: string, values: [string, string, string], colors: [string, string, string],
 ): number {
   const w = cols.reduce((s, c) => s + c.w, 0);
   const rowH = 24;
@@ -169,19 +155,17 @@ function drawPurchaseSubtotal(
   // Label spans everything left of the three numeric columns.
   const labelW = cols.slice(0, -3).reduce((s, c) => s + c.w, 0);
   doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(9)
-    .text('Total Purchase', x + 4, y + 8, { width: labelW - 8, align: 'right', lineBreak: false, characterSpacing: 0.6, ellipsis: true });
-  const amountCol = cols[cols.length - 3];
-  const paidCol = cols[cols.length - 2];
-  const outCol = cols[cols.length - 1];
-  const amountX = x + labelW;
-  const paidX = amountX + amountCol.w;
-  const outX = paidX + paidCol.w;
-  doc.fillColor(ROSE).font('Helvetica-Bold').fontSize(10)
-    .text(amount, amountX, y + 7, { width: amountCol.w - 4, align: 'right', lineBreak: false, ellipsis: true });
-  doc.fillColor(EMERALD).font('Helvetica-Bold').fontSize(10)
-    .text(paid, paidX, y + 7, { width: paidCol.w - 4, align: 'right', lineBreak: false, ellipsis: true });
-  doc.fillColor(ROSE).font('Helvetica-Bold').fontSize(10)
-    .text(outstanding, outX, y + 7, { width: outCol.w - 4, align: 'right', lineBreak: false, ellipsis: true });
+    .text(label, x + 4, y + 8, { width: labelW - 8, align: 'right', lineBreak: false, characterSpacing: 0.6, ellipsis: true });
+  const c1 = cols[cols.length - 3];
+  const c2 = cols[cols.length - 2];
+  const c3 = cols[cols.length - 1];
+  const x1 = x + labelW;
+  const x2 = x1 + c1.w;
+  const x3 = x2 + c2.w;
+  doc.font('Helvetica-Bold').fontSize(10);
+  doc.fillColor(colors[0]).text(values[0], x1, y + 7, { width: c1.w - 4, align: 'right', lineBreak: false, ellipsis: true });
+  doc.fillColor(colors[1]).text(values[1], x2, y + 7, { width: c2.w - 4, align: 'right', lineBreak: false, ellipsis: true });
+  doc.fillColor(colors[2]).text(values[2], x3, y + 7, { width: c3.w - 4, align: 'right', lineBreak: false, ellipsis: true });
   return y + rowH;
 }
 
@@ -257,23 +241,29 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
     drawSectionHeader(doc, left, y, fullW, `PURCHASE  ·  Costs against this Job  ·  ${pCur}`);
     y += 24;
 
-    // Tighter fixed columns, dynamic-height Supplier / Narration. The
-    // three financial columns (Amount / Paid / Outstanding) are
-    // right-aligned numeric only so a supplier bill shows what it cost,
-    // how much has been settled by Payment vouchers, and what is still
-    // owed — the same paid/outstanding breakdown the Sales side gets.
-    const pFixed = 20 + 60 + 52 + 70 + 70 + 70; // # + Voucher + Date + Amount + Paid + Outstanding
+    // Both tables share this right-hand numeric grid (three money columns
+    // of identical width). Because each table spans the full content width
+    // and the numeric block is always the trailing 3 columns, the columns
+    // line up vertically between PURCHASE and SALES for a clean ledger look.
+    const NUM1 = 68; // Amount  / Paid
+    const NUM2 = 64; // Paid    / Outstanding
+    const NUM3 = 78; // Outst.  / Total
+    const numericW = NUM1 + NUM2 + NUM3;
+
+    // PURCHASE: # + Voucher + Date are fixed; Supplier + Reference share
+    // the remaining width and wrap so long names never collide with the
+    // header or the numeric grid.
+    const pFixed = 18 + 72 + 60 + numericW;
     const pRest = fullW - pFixed;
     const pCols: Col[] = [
-      { label: '#',             w: 20,           align: 'left'                 },
-      { label: 'Voucher #',     w: 60,           align: 'left'                 },
-      { label: 'Date',          w: 52,           align: 'left'                 },
-      { label: 'Supplier',      w: pRest * 0.46, align: 'left',  wrap: true   },
-      { label: 'Ref / Sup Inv', w: pRest * 0.24, align: 'left'                 },
-      { label: 'Narration',     w: pRest * 0.30, align: 'left',  wrap: true   },
-      { label: 'Amount',        w: 70,           align: 'right'                },
-      { label: 'Paid',          w: 70,           align: 'right'                },
-      { label: 'Outstanding',   w: 70,           align: 'right'                },
+      { label: '#',           w: 18,           align: 'left'              },
+      { label: 'Voucher #',   w: 72,           align: 'left'              },
+      { label: 'Date',        w: 60,           align: 'left'              },
+      { label: 'Supplier',    w: pRest * 0.58, align: 'left', wrap: true  },
+      { label: 'Reference',   w: pRest * 0.42, align: 'left', wrap: true  },
+      { label: 'Amount',      w: NUM1,         align: 'right'             },
+      { label: 'Paid',        w: NUM2,         align: 'right'             },
+      { label: 'Outstanding', w: NUM3,         align: 'right'             },
     ];
 
     y = drawTableHead(doc, left, y, pCols);
@@ -284,13 +274,13 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
         const r = data.purchaseRows[i];
         const paid = r.paid ?? 0;
         const outstanding = r.outstanding ?? (r.amount - paid);
+        const reference = [r.ref, r.narration].filter(Boolean).join('  ·  ') || '-';
         const cells = [
           String(i + 1),
           r.voucherNumber,
           fmtDate(new Date(r.voucherDate)),
           (r.supplierCode ? r.supplierCode + ' - ' : '') + r.supplierName,
-          r.ref || '-',
-          r.narration || '-',
+          reference,
           fmt(r.amount),
           fmt(paid),
           fmt(outstanding),
@@ -300,12 +290,12 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
         y = drawDataRow(doc, left, y, pCols, cells, i % 2 === 1);
       }
       y = ensureSpace(doc, y, 26);
-      // Multi-value subtotal: Amount / Paid / Outstanding under their
-      // own columns so the bottom line mirrors the column layout.
+      // Subtotal mirrors the columns: Amount (cost) / Paid / Outstanding.
       const pPaid = data.totals.totalPurchasePaid ?? 0;
       const pOut = data.totals.totalPurchaseOutstanding ?? (data.totals.totalPurchase - pPaid);
-      y = drawPurchaseSubtotal(doc, left, y, pCols,
-        fmt(data.totals.totalPurchase), fmt(pPaid), fmt(pOut));
+      y = drawTripleSubtotal(doc, left, y, pCols, 'Total Purchase',
+        [fmt(data.totals.totalPurchase), fmt(pPaid), fmt(pOut)],
+        [ROSE, EMERALD, ROSE]);
     }
     y += 14;
 
@@ -314,17 +304,20 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
     drawSectionHeader(doc, left, y, fullW, `SALES  ·  Invoices issued on this Job  ·  ${sCur}`);
     y += 24;
 
-    const sFixed = 20 + 78 + 56 + 60 + 70 + 70 + 80;
-    const sCustomerW = fullW - sFixed;
+    // Same trailing numeric grid (NUM1/NUM2/NUM3) as PURCHASE so the money
+    // columns align between the two tables. # + Invoice + Date + Status are
+    // fixed; Customer takes the remaining width and wraps.
+    const sFixed = 18 + 80 + 60 + 56 + numericW;
+    const sCustomerW = Math.max(110, fullW - sFixed);
     const sCols: Col[] = [
-      { label: '#',           w: 20,                            align: 'left'                },
-      { label: 'Invoice #',   w: 78,                            align: 'left'                },
-      { label: 'Date',        w: 56,                            align: 'left'                },
-      { label: 'Customer',    w: Math.max(120, sCustomerW),     align: 'left', wrap: true   },
-      { label: 'Status',      w: 60,                            align: 'left'                },
-      { label: 'Paid',        w: 70,                            align: 'right'               },
-      { label: 'Outstanding', w: 70,                            align: 'right'               },
-      { label: 'Total',       w: 80,                            align: 'right'               },
+      { label: '#',           w: 18,           align: 'left'              },
+      { label: 'Invoice #',   w: 80,           align: 'left'              },
+      { label: 'Date',        w: 60,           align: 'left'              },
+      { label: 'Customer',    w: sCustomerW,   align: 'left', wrap: true  },
+      { label: 'Status',      w: 56,           align: 'left'              },
+      { label: 'Paid',        w: NUM1,         align: 'right'             },
+      { label: 'Outstanding', w: NUM2,         align: 'right'             },
+      { label: 'Total',       w: NUM3,         align: 'right'             },
     ];
 
     y = drawTableHead(doc, left, y, sCols);
@@ -348,7 +341,11 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
         y = drawDataRow(doc, left, y, sCols, cells, i % 2 === 1);
       }
       y = ensureSpace(doc, y, 26);
-      y = drawSubtotalRow(doc, left, y, sCols, 'Total Sales', fmt(data.totals.totalSales), EMERALD);
+      // Subtotal mirrors the columns: Paid / Outstanding / Total.
+      const sPaid = data.salesRows.reduce((s, r) => s + r.paid, 0);
+      y = drawTripleSubtotal(doc, left, y, sCols, 'Total Sales',
+        [fmt(sPaid), fmt(data.totals.totalOutstanding), fmt(data.totals.totalSales)],
+        [EMERALD, BRAND_RED, EMERALD]);
     }
     y += 16;
 
