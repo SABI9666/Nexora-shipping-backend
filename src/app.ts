@@ -29,6 +29,7 @@ import { ensureStandardAccountGroups } from './utils/bootstrapAccountGroups';
 import { ensureStandardChargeItems } from './utils/bootstrapChargeItems';
 import { ensureSeedBankAccounts } from './utils/bootstrapBankAccounts';
 import { migrateLegacyCountryCodes } from './utils/migrateLegacyCountryCodes';
+import { ensureVoucherAllocationSchema } from './utils/ensureVoucherSchema';
 
 const app = express();
 
@@ -131,6 +132,9 @@ const PORT = parseInt(process.env.PORT || '8080', 10);
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Nexora Shipping API running on port ${PORT}`);
   console.log(`📦 Environment: ${process.env.NODE_ENV || 'development'}`);
+  // Run schema sync FIRST so supplier-payment queries don't 500 on stale
+  // boots where `prisma db push` failed transiently — see ensureVoucherSchema.
+  ensureVoucherAllocationSchema();
   ensureStandardAccountGroups();
   ensureStandardChargeItems();
   ensureSeedBankAccounts();
