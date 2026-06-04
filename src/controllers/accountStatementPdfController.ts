@@ -59,6 +59,7 @@ export const accountStatementPdf = async (
         id: true,
         invoiceNumber: true,
         invoiceDate: true,
+        dueDate: true,
         currency: true,
         total: true,
         jobNo: true,
@@ -90,6 +91,7 @@ export const accountStatementPdf = async (
       voucherNumber: string;
       type: string;
       reference: string | null;
+      dueDate: Date | null;
       narration: string | null;
       currency: string;
       debit: number;
@@ -105,6 +107,7 @@ export const accountStatementPdf = async (
         voucherNumber: `INV ${inv.invoiceNumber}`,
         type: 'INVOICE',
         reference: inv.orderRef ? `ORD ${inv.orderRef.orderNumber}` : (inv.jobNo || null),
+        dueDate: inv.dueDate ?? null,
         narration: 'Sales invoice',
         currency: inv.currency,
         debit: inv.total,
@@ -131,6 +134,7 @@ export const accountStatementPdf = async (
         voucherNumber: v.voucherNumber,
         type: v.type,
         reference: ref,
+        dueDate: null,
         narration: v.narration,
         currency: v.currency,
         debit,
