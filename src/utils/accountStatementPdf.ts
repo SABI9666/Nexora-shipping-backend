@@ -47,6 +47,9 @@ export interface AccountStatementPdfData {
     voucherNumber: string;
     type: string;
     reference: string | null;
+    // Invoice due date — surfaced for INVOICE rows so the customer can see
+    // each receivable's payment-by date in the ledger. Null for voucher rows.
+    dueDate: Date | string | null;
     narration: string | null;
     currency: string;
     debit: number;
@@ -270,19 +273,23 @@ export function generateAccountStatementPdfBuffer(data: AccountStatementPdfData)
     drawSectionHeader(doc, left, y, fullW, `LEDGER  ·  ${data.rows.length} transaction${data.rows.length === 1 ? '' : 's'}`);
     y += 24;
 
-    const fixedWidth = 56 + 86 + 96 + 60 + 60 + 72;
-    const narrationW = Math.max(110, fullW - fixedWidth);
+    // "Due Date" sits next to the transaction Date so it stays visible
+    // alongside the receivable it relates to. It is blank on voucher
+    // rows (only invoices carry a due date).
+    const fixedWidth = 52 + 80 + 52 + 88 + 56 + 56 + 68;
+    const narrationW = Math.max(96, fullW - fixedWidth);
     const cols: Col[] = [
-      { label: 'Date',       w: 56,         align: 'left'                 },
-      { label: 'Voucher #',  w: 86,         align: 'left'                 },
-      { label: 'Reference',  w: 96,         align: 'left', wrap: true     },
+      { label: 'Date',       w: 52,         align: 'left'                 },
+      { label: 'Voucher #',  w: 80,         align: 'left'                 },
+      { label: 'Due Date',   w: 52,         align: 'left'                 },
+      { label: 'Reference',  w: 88,         align: 'left', wrap: true     },
       { label: 'Narration',  w: narrationW, align: 'left', wrap: true     },
-      { label: 'Debit',      w: 60,         align: 'right'                },
-      { label: 'Credit',     w: 60,         align: 'right'                },
-      { label: 'Balance',    w: 72,         align: 'right'                },
+      { label: 'Debit',      w: 56,         align: 'right'                },
+      { label: 'Credit',     w: 56,         align: 'right'                },
+      { label: 'Balance',    w: 68,         align: 'right'                },
     ];
-    const DEBIT_IDX = 4;
-    const CREDIT_IDX = 5;
+    const DEBIT_IDX = 5;
+    const CREDIT_IDX = 6;
 
     y = drawTableHead(doc, left, y, cols);
 
@@ -295,14 +302,14 @@ export function generateAccountStatementPdfBuffer(data: AccountStatementPdfData)
       let cx = left;
       doc.fontSize(8);
       const cells = [
-        '', '', '', 'Opening Balance',
+        '', '', '', '', 'Opening Balance',
         data.opening.debit > 0 ? fmt(data.opening.debit) : '',
         data.opening.credit > 0 ? fmt(data.opening.credit) : '',
         `${fmt(openingBalance)} ${openingSide}`,
       ];
       cols.forEach((c, i) => {
         const isLast = i === cols.length - 1;
-        const isLabel = i === 3;
+        const isLabel = i === 4;
         doc.font(isLabel || isLast ? 'Helvetica-Bold' : 'Helvetica');
         const color: string = isLast ? NAVY
           : (isLabel ? NAVY
@@ -325,6 +332,7 @@ export function generateAccountStatementPdfBuffer(data: AccountStatementPdfData)
         const cells = [
           fmtDate(r.date),
           r.voucherNumber,
+          r.dueDate ? fmtDate(r.dueDate) : '-',
           r.reference || '-',
           r.narration || '-',
           r.debit > 0 ? fmt(r.debit) : '',
