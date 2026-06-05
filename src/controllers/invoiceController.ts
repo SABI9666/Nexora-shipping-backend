@@ -80,6 +80,9 @@ const updateInvoiceSchema = z.object({
   notes: z.string().optional(),
   invoiceDate: z.string().optional(),
   dueDate: z.string().optional(),
+  // Same enum as createInvoiceSchema so the edit form can switch the
+  // invoice currency (USD → AED etc.) and have it actually persist.
+  currency: z.enum(['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'INR', 'AED', 'SAR']).optional(),
   taxRate: z.number().min(0).max(100).optional(),
   shippingCost: z.number().min(0).optional(),
   items: z.array(invoiceItemSchema).min(1).optional(),
@@ -366,11 +369,18 @@ export const updateInvoice = async (req: AuthRequest, res: Response, next: NextF
     });
     if (!invoice) throw new AppError('Invoice not found', 404);
 
+    // Effective currency for this update — switches to the new value
+    // when the edit form changed it; otherwise stays at the existing one.
+    // Used downstream for amountInWords, line-currency defaults, and the
+    // persisted invoice.currency column so a USD → AED edit propagates
+    // through the document.
+    const newCurrency = data.currency ?? invoice.currency;
+
     const sourceItems = data.items ?? invoice.items.map((i) => ({
       description: i.description,
       quantity: i.quantity,
       unitPrice: i.unitPrice,
-      lineCurrency: i.lineCurrency ?? invoice.currency,
+      lineCurrency: i.lineCurrency ?? newCurrency,
       exchangeRate: i.exchangeRate ?? 1,
       vatPercent: i.vatPercent ?? 0,
       remarks: i.remarks ?? undefined,
@@ -378,7 +388,7 @@ export const updateInvoice = async (req: AuthRequest, res: Response, next: NextF
     const newShippingCost = data.shippingCost ?? invoice.shippingCost;
     const enriched = enrichItems(sourceItems);
     const { subtotal, taxAmount, total } = calcTotals(enriched, newShippingCost);
-    const amountInWords = amountToWords(total, invoice.currency);
+    const amountInWords = amountToWords(total, newCurrency);
 
     const shipmentUpdate: Record<string, string | null | undefined> = {};
     for (const k of Object.keys(SHIPMENT_FIELDS) as (keyof typeof SHIPMENT_FIELDS)[]) {
@@ -401,6 +411,7 @@ export const updateInvoice = async (req: AuthRequest, res: Response, next: NextF
         ...(data.notes !== undefined ? { notes: data.notes || null } : {}),
         ...(data.invoiceDate !== undefined ? { invoiceDate: data.invoiceDate ? new Date(data.invoiceDate) : new Date() } : {}),
         ...(data.dueDate !== undefined ? { dueDate: data.dueDate ? new Date(data.dueDate) : null } : {}),
+        ...(data.currency ? { currency: data.currency } : {}),
         ...shipmentUpdate,
         ...(data.taxRate !== undefined ? { taxRate: data.taxRate } : {}),
         shippingCost: newShippingCost,
@@ -416,7 +427,7 @@ export const updateInvoice = async (req: AuthRequest, res: Response, next: NextF
               quantity: it.quantity,
               unitPrice: it.unitPrice,
               amount: it.amount,
-              lineCurrency: it.lineCurrency || invoice.currency,
+              lineCurrency: it.lineCurrency || newCurrency,
               exchangeRate: it.exchangeRate,
               vatPercent: it.vatPercent,
               vatAmount: it.vatAmount,
