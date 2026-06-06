@@ -41,6 +41,29 @@ export async function ensureVoucherAllocationSchema(): Promise<void> {
           END IF;
         END $$`,
     },
+    // Purchase Voucher tax breakdown — net amount + UAE-style input /
+    // output VAT. Same idempotent pattern: each column gets ADD IF NOT
+    // EXISTS with a default 0 so existing rows stay valid.
+    {
+      name: 'vouchers.netAmount column',
+      sql: `ALTER TABLE "vouchers" ADD COLUMN IF NOT EXISTS "netAmount" DOUBLE PRECISION NOT NULL DEFAULT 0`,
+    },
+    {
+      name: 'vouchers.inputVatPercent column',
+      sql: `ALTER TABLE "vouchers" ADD COLUMN IF NOT EXISTS "inputVatPercent" DOUBLE PRECISION NOT NULL DEFAULT 0`,
+    },
+    {
+      name: 'vouchers.inputVatAmount column',
+      sql: `ALTER TABLE "vouchers" ADD COLUMN IF NOT EXISTS "inputVatAmount" DOUBLE PRECISION NOT NULL DEFAULT 0`,
+    },
+    {
+      name: 'vouchers.outputVatPercent column',
+      sql: `ALTER TABLE "vouchers" ADD COLUMN IF NOT EXISTS "outputVatPercent" DOUBLE PRECISION NOT NULL DEFAULT 0`,
+    },
+    {
+      name: 'vouchers.outputVatAmount column',
+      sql: `ALTER TABLE "vouchers" ADD COLUMN IF NOT EXISTS "outputVatAmount" DOUBLE PRECISION NOT NULL DEFAULT 0`,
+    },
   ];
 
   for (let attempt = 1; attempt <= 5; attempt += 1) {
@@ -48,7 +71,7 @@ export async function ensureVoucherAllocationSchema(): Promise<void> {
       for (const stmt of statements) {
         await prisma.$executeRawUnsafe(stmt.sql);
       }
-      console.log(`[schema] voucher_allocations.purchaseVoucherId verified on attempt ${attempt}`);
+      console.log(`[schema] voucher tax + purchaseVoucherId columns verified on attempt ${attempt}`);
       return;
     } catch (err) {
       const msg = (err as { message?: string }).message || String(err);

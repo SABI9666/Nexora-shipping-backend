@@ -509,6 +509,14 @@ model Voucher {
   direction       VoucherDirection
   voucherDate     DateTime             @default(now())
   amount          Float
+  // Net amount + UAE-style VAT breakdown for Purchase vouchers.
+  // amount stays as the gross (netAmount + inputVatAmount) so existing
+  // queries / reports keep working without changes.
+  netAmount       Float                @default(0)
+  inputVatPercent Float                @default(0)
+  inputVatAmount  Float                @default(0)
+  outputVatPercent Float               @default(0)
+  outputVatAmount Float                @default(0)
   currency        String               @default("AED")
   referenceType   VoucherReferenceType @default(NONE)
   invoiceId       String?
