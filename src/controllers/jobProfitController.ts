@@ -37,6 +37,14 @@ async function buildJobProfit(orderId: string, userId: string, isAdmin: boolean)
 
   const purchaseRows = purchaseVouchers.map((v) => {
     const paid = v.paymentAllocations.reduce((s, a) => s + a.allocatedAmount, 0);
+    // Net vs VAT split. Tax (input VAT) is treated as a recoverable
+    // pass-through and excluded from the cost figure used for profit.
+    // Falls back to amount-as-net for legacy vouchers booked before the
+    // tax fields were added, so old jobs still total correctly.
+    const inputVat = Math.round((v.inputVatAmount || 0) * 100) / 100;
+    const net = Math.round(((v.netAmount && v.netAmount > 0)
+      ? v.netAmount
+      : (v.amount - inputVat)) * 100) / 100;
     return {
       voucherNumber: v.voucherNumber,
       voucherDate: v.voucherDate,
@@ -45,6 +53,8 @@ async function buildJobProfit(orderId: string, userId: string, isAdmin: boolean)
       ref: v.allocations[0]?.invoiceNumber || v.allocations[0]?.refNo || '',
       narration: v.narration || '',
       currency: v.currency,
+      net,
+      vat: inputVat,
       amount: v.amount,
       paid: Math.round(paid * 100) / 100,
       outstanding: Math.round((v.amount - paid) * 100) / 100,
@@ -57,11 +67,18 @@ async function buildJobProfit(orderId: string, userId: string, isAdmin: boolean)
       .reduce((s, v) => s + v.amount, 0);
     const allocated = i.voucherAllocations.reduce((s, a) => s + a.allocatedAmount, 0);
     const paid = credits + allocated;
+    // Output VAT (the tax collected from the customer) sits in the
+    // taxAmount column on the Invoice — pulled out so profit is computed
+    // on the net (taxable) sale.
+    const outputVat = Math.round((i.taxAmount || 0) * 100) / 100;
+    const net = Math.round((i.subtotal ?? (i.total - outputVat)) * 100) / 100;
     return {
       invoiceNumber: i.invoiceNumber,
       invoiceDate: i.invoiceDate,
       billToName: i.billToName,
       currency: i.currency,
+      net,
+      vat: outputVat,
       total: i.total,
       paid,
       outstanding: Math.round((i.total - paid) * 100) / 100,
@@ -69,12 +86,20 @@ async function buildJobProfit(orderId: string, userId: string, isAdmin: boolean)
     };
   });
 
+  // Profit is computed on the net side so the recoverable / payable VAT
+  // is not mistaken for revenue or cost. The VAT position (Output −
+  // Input) is what's actually due to / claimable from the tax authority.
+  const totalPurchaseNet = Math.round(purchaseRows.reduce((s, r) => s + r.net, 0) * 100) / 100;
+  const totalPurchaseVat = Math.round(purchaseRows.reduce((s, r) => s + r.vat, 0) * 100) / 100;
   const totalPurchase = purchaseRows.reduce((s, r) => s + r.amount, 0);
   const totalPurchasePaid = purchaseRows.reduce((s, r) => s + r.paid, 0);
   const totalPurchaseOutstanding = Math.round((totalPurchase - totalPurchasePaid) * 100) / 100;
+  const totalSalesNet = Math.round(salesRows.reduce((s, r) => s + r.net, 0) * 100) / 100;
+  const totalSalesVat = Math.round(salesRows.reduce((s, r) => s + r.vat, 0) * 100) / 100;
   const totalSales = salesRows.reduce((s, r) => s + r.total, 0);
   const totalOutstanding = salesRows.reduce((s, r) => s + r.outstanding, 0);
-  const netProfit = totalSales - totalPurchase;
+  const netProfit = Math.round((totalSalesNet - totalPurchaseNet) * 100) / 100;
+  const vatNetPosition = Math.round((totalSalesVat - totalPurchaseVat) * 100) / 100;
 
   return {
     order: {
@@ -91,8 +116,10 @@ async function buildJobProfit(orderId: string, userId: string, isAdmin: boolean)
     purchaseRows,
     salesRows,
     totals: {
-      totalPurchase, totalPurchasePaid, totalPurchaseOutstanding,
-      totalSales, netProfit, totalOutstanding,
+      totalPurchase, totalPurchaseNet, totalPurchaseVat,
+      totalPurchasePaid, totalPurchaseOutstanding,
+      totalSales, totalSalesNet, totalSalesVat,
+      netProfit, vatNetPosition, totalOutstanding,
     },
   };
 }

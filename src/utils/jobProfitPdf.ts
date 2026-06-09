@@ -45,6 +45,10 @@ export interface JobProfitData {
     ref: string;
     narration: string;
     currency: string;
+    // net + vat are derived from voucher.netAmount / voucher.inputVatAmount;
+    // amount stays as the gross (net + input VAT) for payable / paid math.
+    net?: number;
+    vat?: number;
     amount: number;
     paid?: number;
     outstanding?: number;
@@ -54,6 +58,9 @@ export interface JobProfitData {
     invoiceDate: Date | string;
     billToName: string;
     currency: string;
+    // net + vat come from invoice.subtotal / invoice.taxAmount (output VAT).
+    net?: number;
+    vat?: number;
     total: number;
     paid: number;
     outstanding: number;
@@ -61,10 +68,17 @@ export interface JobProfitData {
   }[];
   totals: {
     totalPurchase: number;
+    // Net + VAT splits so profit is computed on the net (taxable) basis
+    // and the VAT position (Output − Input) can be shown separately.
+    totalPurchaseNet?: number;
+    totalPurchaseVat?: number;
     totalPurchasePaid?: number;
     totalPurchaseOutstanding?: number;
     totalSales: number;
+    totalSalesNet?: number;
+    totalSalesVat?: number;
     netProfit: number;
+    vatNetPosition?: number;
     totalOutstanding: number;
   };
 }
@@ -349,9 +363,19 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
     }
     y += 16;
 
-    y = ensureSpace(doc, y, 120);
+    // Summary panel — splits Sales and Purchase into Net + VAT so the
+    // profit is computed on the taxable (net) figures and the tax that
+    // belongs to the FTA is shown as a separate position below.
+    const totalSalesVat = data.totals.totalSalesVat ?? 0;
+    const totalPurchaseVat = data.totals.totalPurchaseVat ?? 0;
+    const totalSalesNet = data.totals.totalSalesNet ?? (data.totals.totalSales - totalSalesVat);
+    const totalPurchaseNet = data.totals.totalPurchaseNet ?? (data.totals.totalPurchase - totalPurchaseVat);
+    const vatNetPosition = data.totals.vatNetPosition ?? (totalSalesVat - totalPurchaseVat);
+    const showVatBlock = totalSalesVat > 0.005 || totalPurchaseVat > 0.005;
+
+    const panelH = showVatBlock ? 196 : 100;
+    y = ensureSpace(doc, y, panelH + 20);
     const cur = sCur;
-    const panelH = 100;
     doc.fillColor(NAVY_TINT_2).rect(left, y, fullW, panelH).fill();
     doc.fillColor(NAVY).rect(left, y, 4, panelH).fill();
     doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(10)
@@ -359,24 +383,69 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
 
     const sumX = left + 16;
     const sumW = fullW - 32;
-    const sumLabelW = sumW * 0.55;
-    const sumValueW = sumW * 0.45;
+    const sumLabelW = sumW * 0.62;
+    const sumValueW = sumW * 0.38;
     let sy = y + 30;
-    const drawSumRow = (label: string, value: string, color: string, strong = false) => {
+    const drawSumRow = (label: string, value: string, color: string, strong = false, indent = 0) => {
       doc.fillColor(MUTED).font('Helvetica').fontSize(strong ? 11 : 9.5)
-        .text(label, sumX, sy + (strong ? 1 : 0), { width: sumLabelW, lineBreak: false });
+        .text(label, sumX + indent, sy + (strong ? 1 : 0), { width: sumLabelW - indent, lineBreak: false });
       doc.fillColor(color).font('Helvetica-Bold').fontSize(strong ? 13 : 10.5)
         .text(value, sumX + sumLabelW, sy, { width: sumValueW, align: 'right', lineBreak: false, ellipsis: true });
       sy += strong ? 22 : 14;
     };
-    drawSumRow('Total Sales (S)', `${cur} ${fmt(data.totals.totalSales)}`, EMERALD);
-    drawSumRow('Total Purchase (P)', `${cur} ${fmt(data.totals.totalPurchase)}`, ROSE);
-    doc.lineWidth(0.6).strokeColor(DIVIDER).moveTo(sumX, sy - 2).lineTo(sumX + sumW, sy - 2).stroke();
-    sy += 4;
+    const drawDivider = () => {
+      doc.lineWidth(0.6).strokeColor(DIVIDER).moveTo(sumX, sy - 2).lineTo(sumX + sumW, sy - 2).stroke();
+      sy += 4;
+    };
+
+    if (showVatBlock) {
+      drawSumRow('Total Sales (gross)', `${cur} ${fmt(data.totals.totalSales)}`, EMERALD);
+      drawSumRow('Less: Output VAT', `(${cur} ${fmt(totalSalesVat)})`, MUTED, false, 12);
+      drawSumRow("Net Sales (S')", `${cur} ${fmt(totalSalesNet)}`, EMERALD);
+      drawSumRow('Total Purchase (gross)', `${cur} ${fmt(data.totals.totalPurchase)}`, ROSE);
+      drawSumRow('Less: Input VAT (recoverable)', `(${cur} ${fmt(totalPurchaseVat)})`, MUTED, false, 12);
+      drawSumRow("Net Purchase (P')", `${cur} ${fmt(totalPurchaseNet)}`, ROSE);
+    } else {
+      drawSumRow('Total Sales (S)', `${cur} ${fmt(data.totals.totalSales)}`, EMERALD);
+      drawSumRow('Total Purchase (P)', `${cur} ${fmt(data.totals.totalPurchase)}`, ROSE);
+    }
+    drawDivider();
     const profitColor = data.totals.netProfit >= 0 ? EMERALD : ROSE;
-    drawSumRow('NET PROFIT (S - P)', `${cur} ${fmt(data.totals.netProfit)}`, profitColor, true);
+    drawSumRow(
+      showVatBlock ? "NET PROFIT (S' - P')" : 'NET PROFIT (S - P)',
+      `${cur} ${fmt(data.totals.netProfit)}`, profitColor, true,
+    );
 
     y += panelH + 12;
+
+    // VAT POSITION — Output VAT (collected) minus Input VAT (recoverable)
+    // is what's payable to the tax authority (or refundable when negative).
+    // Rendered as its own callout so the operator sees the tax liability
+    // distinct from the trading profit.
+    if (showVatBlock) {
+      y = ensureSpace(doc, y, 90);
+      const vatPanelH = 76;
+      doc.fillColor(NAVY_TINT_2).rect(left, y, fullW, vatPanelH).fill();
+      doc.fillColor(NAVY).rect(left, y, 4, vatPanelH).fill();
+      doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(10)
+        .text('VAT POSITION', left + 14, y + 10, { width: 200, lineBreak: false, characterSpacing: 1.4 });
+      let vy = y + 30;
+      const drawVatRow = (label: string, value: string, color: string, strong = false) => {
+        doc.fillColor(MUTED).font('Helvetica').fontSize(strong ? 11 : 9.5)
+          .text(label, sumX, vy + (strong ? 1 : 0), { width: sumLabelW, lineBreak: false });
+        doc.fillColor(color).font('Helvetica-Bold').fontSize(strong ? 12 : 10)
+          .text(value, sumX + sumLabelW, vy, { width: sumValueW, align: 'right', lineBreak: false, ellipsis: true });
+        vy += strong ? 16 : 13;
+      };
+      drawVatRow('Output VAT (collected from customer)', `${cur} ${fmt(totalSalesVat)}`, EMERALD);
+      drawVatRow('Input VAT (paid to supplier, recoverable)', `(${cur} ${fmt(totalPurchaseVat)})`, MUTED);
+      const vatColor = vatNetPosition >= 0 ? BRAND_RED : EMERALD;
+      const vatLabel = vatNetPosition >= 0
+        ? 'Net VAT payable to FTA'
+        : 'Net VAT refundable from FTA';
+      drawVatRow(vatLabel, `${cur} ${fmt(Math.abs(vatNetPosition))}`, vatColor, true);
+      y += vatPanelH + 12;
+    }
 
     if (data.totals.totalOutstanding > 0.005) {
       y = ensureSpace(doc, y, 26);
