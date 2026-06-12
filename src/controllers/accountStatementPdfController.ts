@@ -1,9 +1,10 @@
 import { Response, NextFunction } from 'express';
-import { Role, VoucherDirection } from '@prisma/client';
+import { Role } from '@prisma/client';
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../types';
 import { generateAccountStatementPdfBuffer } from '../utils/accountStatementPdf';
+import { partyLedgerSide } from '../utils/voucherLedger';
 
 function round2(n: number) {
   return Math.round(n * 100) / 100;
@@ -117,8 +118,10 @@ export const accountStatementPdf = async (
       });
     }
     for (const v of vouchers) {
-      const debit = v.direction === VoucherDirection.DEBIT ? v.amount : 0;
-      const credit = v.direction === VoucherDirection.CREDIT ? v.amount : 0;
+      // Use the type-aware party-side mapping so paying a supplier reduces
+      // (not adds to) the supplier balance, and a purchase increases the
+      // payable on the credit column — matches Outstanding Payables math.
+      const { debit, credit } = partyLedgerSide(v.type, v.direction, v.amount);
       // Prefer the linked Purchase Voucher(s) on supplier-side payments,
       // then fall back to the invoice / order reference.
       const linkedPurchases = Array.from(new Set(
