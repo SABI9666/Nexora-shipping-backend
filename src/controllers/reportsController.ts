@@ -3,6 +3,7 @@ import { Role, VoucherDirection, VoucherType, InvoiceStatus, OrderStatus } from 
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../types';
+import { partyLedgerSide } from '../utils/voucherLedger';
 import { generateCustomerStatementPdfBuffer } from '../utils/customerStatementPdf';
 
 function parseDateRange(req: AuthRequest): { from: Date | null; to: Date | null } {
@@ -427,8 +428,10 @@ export const accountStatement = async (req: AuthRequest, res: Response, next: Ne
     }
 
     for (const v of vouchers) {
-      const debit = v.direction === VoucherDirection.DEBIT ? v.amount : 0;
-      const credit = v.direction === VoucherDirection.CREDIT ? v.amount : 0;
+      // Type-aware party-side mapping (Purchase = Cr on supplier statement,
+      // Payment / Supplier Payment / Debit Note = Dr) so paying a supplier
+      // reduces — rather than adds to — the supplier balance.
+      const { debit, credit } = partyLedgerSide(v.type, v.direction, v.amount);
       const linkedPurchases = Array.from(new Set(
         (v.allocations || [])
           .map((a) => a.purchaseVoucher?.voucherNumber)
