@@ -135,12 +135,16 @@ export const vatLedgerPdf = async (req: AuthRequest, res: Response, next: NextFu
       where: { isDefault: true },
       select: { companyTrn: true },
     });
-    const buffer = await generateVatLedgerPdfBuffer({ ...data, companyTrn: defaultBank?.companyTrn || undefined });
+    // ?type=output|input renders a single ledger; anything else = both.
+    const t = (req.query.type as string | undefined)?.toLowerCase();
+    const variant: 'both' | 'output' | 'input' = t === 'output' ? 'output' : t === 'input' ? 'input' : 'both';
+    const buffer = await generateVatLedgerPdfBuffer({ ...data, variant, companyTrn: defaultBank?.companyTrn || undefined });
 
     const fromStamp = data.period.from ? data.period.from.toISOString().slice(0, 10).replace(/-/g, '') : 'all';
     const toStamp = data.period.to ? data.period.to.toISOString().slice(0, 10).replace(/-/g, '') : 'all';
+    const namePrefix = variant === 'output' ? 'Output_VAT' : variant === 'input' ? 'Input_VAT' : 'VAT_Ledger';
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="VAT_Ledger_${fromStamp}_${toStamp}.pdf"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${namePrefix}_${fromStamp}_${toStamp}.pdf"`);
     res.send(buffer);
   } catch (error) {
     next(error);
