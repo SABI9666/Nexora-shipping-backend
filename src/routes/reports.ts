@@ -13,6 +13,7 @@ import {
 import { jobProfit, jobProfitPdf } from '../controllers/jobProfitController';
 import { outstandingPayables } from '../controllers/outstandingPayablesController';
 import { accountStatementPdf } from '../controllers/accountStatementPdfController';
+import { vatLedger, vatLedgerPdf } from '../controllers/vatLedgerController';
 
 const router = Router();
 
@@ -30,5 +31,7 @@ router.get('/customer-statement', customerStatement);
 router.get('/customer-statement/pdf', customerStatementPdf);
 router.get('/job-profit', jobProfit);
 router.get('/job-profit/pdf', jobProfitPdf);
+router.get('/vat-ledger', vatLedger);
+router.get('/vat-ledger/pdf', vatLedgerPdf);
 
 export default router;
