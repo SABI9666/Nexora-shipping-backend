@@ -59,6 +59,10 @@ export interface VatLedgerData {
   };
   netVat: number;
   companyTrn?: string;
+  // Which ledger(s) to render. 'output' or 'input' produce a single-ledger
+  // document with its own total; 'both' (default) keeps the combined view
+  // with the net-VAT position panel.
+  variant?: 'both' | 'output' | 'input';
 }
 
 interface Col {
@@ -181,9 +185,16 @@ export function generateVatLedgerPdfBuffer(data: VatLedgerData): Promise<Buffer>
     const fullW = right - left;
     let y = CONTENT_TOP;
 
+    const variant = data.variant || 'both';
+    const showOutput = variant !== 'input';
+    const showInput = variant !== 'output';
+
     // ---- Title -------------------------------------------------------
-    doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(22)
-      .text('VAT LEDGER', left, y, { width: fullW * 0.6, lineBreak: false });
+    const title = variant === 'output' ? 'OUTPUT VAT LEDGER'
+      : variant === 'input' ? 'INPUT VAT LEDGER'
+      : 'VAT LEDGER';
+    doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(variant === 'both' ? 22 : 20)
+      .text(title, left, y, { width: fullW * 0.62, lineBreak: false });
     const trn = data.companyTrn || '105413106300003';
     doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(10)
       .text(`TRN: ${trn}`, left + fullW * 0.6, y + 4, { width: fullW * 0.4, align: 'right', lineBreak: false });
@@ -199,6 +210,7 @@ export function generateVatLedgerPdfBuffer(data: VatLedgerData): Promise<Buffer>
     y += 28;
 
     // ---- OUTPUT VAT --------------------------------------------------
+    if (showOutput) {
     y = ensureSpace(doc, y, 80);
     drawSectionHeader(doc, left, y, fullW, `OUTPUT VAT  ·  Collected on sales  ·  ${data.output.rows.length} invoice${data.output.rows.length === 1 ? '' : 's'}`, EMERALD);
     y += 24;
@@ -227,8 +239,10 @@ export function generateVatLedgerPdfBuffer(data: VatLedgerData): Promise<Buffer>
       y = drawVatSubtotal(doc, left, y, oCols, 'Total Output VAT', fmt(data.output.totalTaxable), fmt(data.output.totalVat), EMERALD);
     }
     y += 16;
+    }
 
     // ---- INPUT VAT ---------------------------------------------------
+    if (showInput) {
     y = ensureSpace(doc, y, 80);
     drawSectionHeader(doc, left, y, fullW, `INPUT VAT  ·  Paid on purchases (recoverable)  ·  ${data.input.rows.length} voucher${data.input.rows.length === 1 ? '' : 's'}`, ROSE);
     y += 24;
@@ -258,38 +272,62 @@ export function generateVatLedgerPdfBuffer(data: VatLedgerData): Promise<Buffer>
       y = drawVatSubtotal(doc, left, y, iCols, 'Total Input VAT', fmt(data.input.totalTaxable), fmt(data.input.totalVat), ROSE);
     }
     y += 18;
-
-    // ---- NET VAT POSITION -------------------------------------------
-    y = ensureSpace(doc, y, 110);
-    const panelH = 96;
-    doc.fillColor(NAVY_TINT_2).rect(left, y, fullW, panelH).fill();
-    doc.fillColor(NAVY).rect(left, y, 4, panelH).fill();
-    doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(10)
-      .text('NET VAT POSITION', left + 14, y + 10, { width: 260, lineBreak: false, characterSpacing: 1.4 });
+    }
 
     const sx = left + 16;
     const sw = fullW - 32;
     const labelW = sw * 0.62;
     const valW = sw * 0.38;
-    let sy = y + 30;
-    const row = (label: string, value: string, color: string, strong = false) => {
+    const row = (label: string, value: string, color: string, strong = false, yy = 0): number => {
       doc.fillColor(MUTED).font('Helvetica').fontSize(strong ? 11 : 9.5)
-        .text(label, sx, sy + (strong ? 1 : 0), { width: labelW, lineBreak: false });
+        .text(label, sx, yy + (strong ? 1 : 0), { width: labelW, lineBreak: false });
       doc.fillColor(color).font('Helvetica-Bold').fontSize(strong ? 13 : 10.5)
-        .text(value, sx + labelW, sy, { width: valW, align: 'right', lineBreak: false, ellipsis: true });
-      sy += strong ? 22 : 15;
+        .text(value, sx + labelW, yy, { width: valW, align: 'right', lineBreak: false, ellipsis: true });
+      return yy + (strong ? 22 : 15);
     };
-    row('Output VAT (collected from customers)', fmt(data.output.totalVat), EMERALD);
-    row('Input VAT (paid to suppliers, recoverable)', `(${fmt(data.input.totalVat)})`, MUTED);
-    doc.lineWidth(0.6).strokeColor(DIVIDER).moveTo(sx, sy - 2).lineTo(sx + sw, sy - 2).stroke();
-    sy += 4;
-    const payable = data.netVat >= 0;
-    row(payable ? 'Net VAT PAYABLE to FTA' : 'Net VAT REFUNDABLE from FTA',
-      fmt(Math.abs(data.netVat)), payable ? BRAND_RED : EMERALD, true);
 
-    y += panelH + 10;
+    if (variant === 'both') {
+      // ---- NET VAT POSITION (combined view only) --------------------
+      y = ensureSpace(doc, y, 110);
+      const panelH = 96;
+      doc.fillColor(NAVY_TINT_2).rect(left, y, fullW, panelH).fill();
+      doc.fillColor(NAVY).rect(left, y, 4, panelH).fill();
+      doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(10)
+        .text('NET VAT POSITION', left + 14, y + 10, { width: 260, lineBreak: false, characterSpacing: 1.4 });
+      let sy = y + 30;
+      sy = row('Output VAT (collected from customers)', fmt(data.output.totalVat), EMERALD, false, sy);
+      sy = row('Input VAT (paid to suppliers, recoverable)', `(${fmt(data.input.totalVat)})`, MUTED, false, sy);
+      doc.lineWidth(0.6).strokeColor(DIVIDER).moveTo(sx, sy - 2).lineTo(sx + sw, sy - 2).stroke();
+      sy += 4;
+      const payable = data.netVat >= 0;
+      row(payable ? 'Net VAT PAYABLE to FTA' : 'Net VAT REFUNDABLE from FTA',
+        fmt(Math.abs(data.netVat)), payable ? BRAND_RED : EMERALD, true, sy);
+      y += panelH + 10;
+    } else {
+      // ---- Single-ledger total panel --------------------------------
+      const isOut = variant === 'output';
+      const total = isOut ? data.output.totalVat : data.input.totalVat;
+      const taxable = isOut ? data.output.totalTaxable : data.input.totalTaxable;
+      y = ensureSpace(doc, y, 70);
+      const panelH = 56;
+      doc.fillColor(NAVY_TINT_2).rect(left, y, fullW, panelH).fill();
+      doc.fillColor(isOut ? EMERALD : ROSE).rect(left, y, 4, panelH).fill();
+      doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(10)
+        .text(isOut ? 'OUTPUT VAT SUMMARY' : 'INPUT VAT SUMMARY', left + 14, y + 10, { width: 260, lineBreak: false, characterSpacing: 1.4 });
+      let sy = y + 30;
+      sy = row('Total taxable value', fmt(taxable), MUTED, false, sy);
+      row(isOut ? 'Total Output VAT (payable to FTA)' : 'Total Input VAT (recoverable from FTA)',
+        fmt(total), isOut ? BRAND_RED : EMERALD, true, sy);
+      y += panelH + 10;
+    }
+
+    const footNote = variant === 'output'
+      ? 'Output VAT from sales invoices'
+      : variant === 'input'
+      ? 'Input VAT from purchase vouchers'
+      : 'Output VAT from sales invoices · Input VAT from purchase vouchers';
     doc.fillColor(SUBTLE).font('Helvetica-Oblique').fontSize(8)
-      .text(`Generated ${fmtDate(new Date())}  ·  Output VAT from sales invoices · Input VAT from purchase vouchers  ·  Computer-generated statement.`,
+      .text(`Generated ${fmtDate(new Date())}  ·  ${footNote}  ·  Computer-generated statement.`,
         left, y, { width: fullW, align: 'center', lineBreak: false });
 
     doc.end();
