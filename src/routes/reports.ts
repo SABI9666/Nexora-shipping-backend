@@ -14,6 +14,7 @@ import { jobProfit, jobProfitPdf } from '../controllers/jobProfitController';
 import { outstandingPayables } from '../controllers/outstandingPayablesController';
 import { accountStatementPdf } from '../controllers/accountStatementPdfController';
 import { vatLedger, vatLedgerPdf } from '../controllers/vatLedgerController';
+import { trialBalance, profitAndLoss, balanceSheet, generalLedger } from '../controllers/financialsController';
 
 const router = Router();
 
@@ -33,5 +34,9 @@ router.get('/job-profit', jobProfit);
 router.get('/job-profit/pdf', jobProfitPdf);
 router.get('/vat-ledger', vatLedger);
 router.get('/vat-ledger/pdf', vatLedgerPdf);
+router.get('/trial-balance', trialBalance);
+router.get('/profit-and-loss', profitAndLoss);
+router.get('/balance-sheet', balanceSheet);
+router.get('/general-ledger', generalLedger);
 
 export default router;
