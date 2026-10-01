@@ -37,6 +37,10 @@ export interface JobProfitData {
     pickupCity?: string | null;
     deliveryCity?: string | null;
   };
+  // Reporting currency for every total / profit figure (always AED).
+  baseCurrency?: string;
+  // Fixed AED rates applied to foreign-currency documents on this Job.
+  fxRates?: { currency: string; rate: number }[];
   purchaseRows: {
     voucherNumber: string;
     voucherDate: Date | string;
@@ -52,6 +56,10 @@ export interface JobProfitData {
     amount: number;
     paid?: number;
     outstanding?: number;
+    exchangeRate?: number;
+    amountAed?: number;
+    paidAed?: number;
+    outstandingAed?: number;
   }[];
   salesRows: {
     invoiceNumber: string;
@@ -65,6 +73,10 @@ export interface JobProfitData {
     paid: number;
     outstanding: number;
     status: string;
+    exchangeRate?: number;
+    totalAed?: number;
+    paidAed?: number;
+    outstandingAed?: number;
   }[];
   totals: {
     totalPurchase: number;
@@ -77,7 +89,9 @@ export interface JobProfitData {
     totalSales: number;
     totalSalesNet?: number;
     totalSalesVat?: number;
+    totalSalesPaid?: number;
     netProfit: number;
+    profitMargin?: number | null;
     vatNetPosition?: number;
     totalOutstanding: number;
   };
@@ -251,8 +265,12 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
     y += infoH + 14;
 
     y = ensureSpace(doc, y, 70);
-    const pCur = data.purchaseRows[0]?.currency || 'AED';
-    drawSectionHeader(doc, left, y, fullW, `PURCHASE  ·  Costs against this Job  ·  ${pCur}`);
+    // Every money column is in the base currency (AED). Foreign-currency
+    // documents show their original amount + rate under the party name.
+    const cur = data.baseCurrency || 'AED';
+    const fxNote = (currency: string, amount: number, rate?: number) =>
+      currency && currency !== cur ? `\n${currency} ${fmt(amount)} @ ${rate ?? 1}` : '';
+    drawSectionHeader(doc, left, y, fullW, `PURCHASE  ·  Costs against this Job  ·  ${cur}`);
     y += 24;
 
     // Both tables share this right-hand numeric grid (three money columns
@@ -286,16 +304,18 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
     } else {
       for (let i = 0; i < data.purchaseRows.length; i++) {
         const r = data.purchaseRows[i];
-        const paid = r.paid ?? 0;
-        const outstanding = r.outstanding ?? (r.amount - paid);
+        const amount = r.amountAed ?? r.amount;
+        const paid = r.paidAed ?? r.paid ?? 0;
+        const outstanding = r.outstandingAed ?? r.outstanding ?? (amount - paid);
         const reference = [r.ref, r.narration].filter(Boolean).join('  ·  ') || '-';
         const cells = [
           String(i + 1),
           r.voucherNumber,
           fmtDate(new Date(r.voucherDate)),
-          (r.supplierCode ? r.supplierCode + ' - ' : '') + r.supplierName,
+          (r.supplierCode ? r.supplierCode + ' - ' : '') + r.supplierName
+            + fxNote(r.currency, r.amount, r.exchangeRate),
           reference,
-          fmt(r.amount),
+          fmt(amount),
           fmt(paid),
           fmt(outstanding),
         ];
@@ -314,8 +334,7 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
     y += 14;
 
     y = ensureSpace(doc, y, 70);
-    const sCur = data.salesRows[0]?.currency || pCur;
-    drawSectionHeader(doc, left, y, fullW, `SALES  ·  Invoices issued on this Job  ·  ${sCur}`);
+    drawSectionHeader(doc, left, y, fullW, `SALES  ·  Invoices issued on this Job  ·  ${cur}`);
     y += 24;
 
     // Same trailing numeric grid (NUM1/NUM2/NUM3) as PURCHASE so the money
@@ -344,11 +363,11 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
           String(i + 1),
           r.invoiceNumber,
           fmtDate(new Date(r.invoiceDate)),
-          r.billToName,
+          r.billToName + fxNote(r.currency, r.total, r.exchangeRate),
           r.status,
-          fmt(r.paid),
-          fmt(r.outstanding),
-          fmt(r.total),
+          fmt(r.paidAed ?? r.paid),
+          fmt(r.outstandingAed ?? r.outstanding),
+          fmt(r.totalAed ?? r.total),
         ];
         const needed = measureRowH(doc, sCols, cells) + 2;
         y = ensureSpace(doc, y, needed);
@@ -356,7 +375,7 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
       }
       y = ensureSpace(doc, y, 26);
       // Subtotal mirrors the columns: Paid / Outstanding / Total.
-      const sPaid = data.salesRows.reduce((s, r) => s + r.paid, 0);
+      const sPaid = data.salesRows.reduce((s, r) => s + (r.paidAed ?? r.paid), 0);
       y = drawTripleSubtotal(doc, left, y, sCols, 'Total Sales',
         [fmt(sPaid), fmt(data.totals.totalOutstanding), fmt(data.totals.totalSales)],
         [EMERALD, BRAND_RED, EMERALD]);
@@ -375,7 +394,6 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
 
     const panelH = showVatBlock ? 196 : 100;
     y = ensureSpace(doc, y, panelH + 20);
-    const cur = sCur;
     doc.fillColor(NAVY_TINT_2).rect(left, y, fullW, panelH).fill();
     doc.fillColor(NAVY).rect(left, y, 4, panelH).fill();
     doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(10)
@@ -469,8 +487,11 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
     }
 
     y += 6;
+    const fxText = (data.fxRates || []).length
+      ? `  ·  All amounts in ${cur}; converted at ${data.fxRates!.map((f) => `1 ${f.currency} = ${f.rate} ${cur}`).join(', ')}`
+      : `  ·  All amounts in ${cur}`;
     doc.fillColor(SUBTLE).font('Helvetica-Oblique').fontSize(8)
-      .text(`Generated ${fmtDate(new Date())}  ·  Profit = Sales - Purchase  ·  Computer-generated statement.`,
+      .text(`Generated ${fmtDate(new Date())}  ·  Profit = Sales - Purchase${fxText}  ·  Computer-generated statement.`,
         left, y, { width: fullW, align: 'center', lineBreak: false });
 
     doc.end();
