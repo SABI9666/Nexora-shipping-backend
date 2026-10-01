@@ -74,6 +74,11 @@ export interface JobProfitData {
     outstanding: number;
     status: string;
     exchangeRate?: number;
+    // Credit notes issued against the invoice (total is net of these).
+    invoiceTotal?: number;
+    creditNote?: number;
+    creditNoteNumbers?: string[];
+    creditNoteAed?: number;
     totalAed?: number;
     paidAed?: number;
     outstandingAed?: number;
@@ -90,6 +95,8 @@ export interface JobProfitData {
     totalSalesNet?: number;
     totalSalesVat?: number;
     totalSalesPaid?: number;
+    totalSalesInvoiced?: number;
+    totalCreditNotes?: number;
     netProfit: number;
     profitMargin?: number | null;
     vatNetPosition?: number;
@@ -363,7 +370,10 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
           String(i + 1),
           r.invoiceNumber,
           fmtDate(new Date(r.invoiceDate)),
-          r.billToName + fxNote(r.currency, r.total, r.exchangeRate),
+          r.billToName + fxNote(r.currency, r.total, r.exchangeRate)
+            + (r.creditNote && r.creditNote > 0.005
+              ? `\nLess credit note ${(r.creditNoteNumbers || []).join(', ')}: ${cur} ${fmt(r.creditNoteAed ?? r.creditNote)}`
+              : ''),
           r.status,
           fmt(r.paidAed ?? r.paid),
           fmt(r.outstandingAed ?? r.outstanding),
@@ -391,8 +401,12 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
     const totalPurchaseNet = data.totals.totalPurchaseNet ?? (data.totals.totalPurchase - totalPurchaseVat);
     const vatNetPosition = data.totals.vatNetPosition ?? (totalSalesVat - totalPurchaseVat);
     const showVatBlock = totalSalesVat > 0.005 || totalPurchaseVat > 0.005;
+    const totalCreditNotes = data.totals.totalCreditNotes ?? 0;
+    const showCn = totalCreditNotes > 0.005;
 
-    const panelH = showVatBlock ? 196 : 100;
+    // Header (30) + 14pt per row + divider (4) + profit row (22) + padding.
+    const sumRows = (showCn ? 2 : 0) + (showVatBlock ? 6 : 2);
+    const panelH = 30 + sumRows * 14 + 4 + 22 + 12;
     y = ensureSpace(doc, y, panelH + 20);
     doc.fillColor(NAVY_TINT_2).rect(left, y, fullW, panelH).fill();
     doc.fillColor(NAVY).rect(left, y, 4, panelH).fill();
@@ -416,6 +430,10 @@ export function generateJobProfitPdfBuffer(data: JobProfitData): Promise<Buffer>
       sy += 4;
     };
 
+    if (showCn) {
+      drawSumRow('Sales invoiced', `${cur} ${fmt(data.totals.totalSalesInvoiced ?? (data.totals.totalSales + totalCreditNotes))}`, EMERALD);
+      drawSumRow('Less: Credit notes issued', `(${cur} ${fmt(totalCreditNotes)})`, ROSE, false, 12);
+    }
     if (showVatBlock) {
       drawSumRow('Total Sales (gross)', `${cur} ${fmt(data.totals.totalSales)}`, EMERALD);
       drawSumRow('Less: Output VAT', `(${cur} ${fmt(totalSalesVat)})`, MUTED, false, 12);

@@ -3,6 +3,7 @@ import { Role, VoucherType } from '@prisma/client';
 import prisma from '../config/database';
 import { AuthRequest } from '../types';
 import { generateVatLedgerPdfBuffer, VatLedgerData } from '../utils/vatLedgerPdf';
+import { effectiveVatRate } from '../utils/creditNotes';
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -31,7 +32,9 @@ function rangeWhere(field: string, from: Date | null, to: Date | null) {
 // Two ledgers for VAT-return preparation, mirroring the legacy accounting
 // system's OUTPUT VAT / INPUT VAT ledger cards:
 //
-//   OUTPUT VAT — VAT collected from customers. Sourced from invoice.taxAmount.
+//   OUTPUT VAT — VAT collected from customers. Sourced from invoice.taxAmount,
+//                LESS the VAT reversed by customer credit notes (shown as
+//                negative / debit entries against the same ledger).
 //                A liability owed to the FTA → shown on the CREDIT side, so the
 //                running balance grows as a credit (Cr).
 //   INPUT VAT  — VAT paid to suppliers (recoverable). Sourced from a Purchase
@@ -60,19 +63,49 @@ async function buildVatLedger(req: AuthRequest): Promise<VatLedgerData> {
     },
   });
 
-  let outRunning = 0;
-  const outputRows = invoices.map((inv) => {
-    outRunning = round2(outRunning + inv.taxAmount);
-    return {
+  // Credit notes in the period that reverse output VAT.
+  const creditNotes = await prisma.voucher.findMany({
+    where: {
+      ...scope,
+      type: VoucherType.CREDIT_NOTE,
+      ...rangeWhere('voucherDate', from, to),
+      outputVatAmount: { gt: 0 },
+    },
+    orderBy: { voucherDate: 'asc' },
+    include: {
+      invoice: { select: { invoiceNumber: true, billToName: true } },
+      account: { select: { name: true } },
+    },
+  });
+
+  const outputEntries = [
+    ...invoices.map((inv) => ({
       date: inv.invoiceDate,
       ref: inv.invoiceNumber,
       particulars: inv.billToName,
       currency: inv.currency,
       taxable: round2(inv.subtotal),
-      ratePercent: round2(inv.taxRate),
+      // VAT may be set per line (header taxRate 0) — use the effective rate.
+      ratePercent: effectiveVatRate(inv),
       vat: round2(inv.taxAmount),
-      running: outRunning,
-    };
+      isCreditNote: false,
+    })),
+    ...creditNotes.map((cn) => ({
+      date: cn.voucherDate,
+      ref: cn.voucherNumber,
+      particulars: `Credit note${cn.invoice ? ` vs ${cn.invoice.invoiceNumber}` : ''} - ${cn.invoice?.billToName || cn.account?.name || cn.partyName || '—'}`,
+      currency: cn.currency,
+      taxable: -round2(cn.netAmount || (cn.amount - cn.outputVatAmount)),
+      ratePercent: round2(cn.outputVatPercent || 0),
+      vat: -round2(cn.outputVatAmount),
+      isCreditNote: true,
+    })),
+  ].sort((a, b) => a.date.getTime() - b.date.getTime());
+
+  let outRunning = 0;
+  const outputRows = outputEntries.map((e) => {
+    outRunning = round2(outRunning + e.vat);
+    return { ...e, running: outRunning };
   });
 
   // ---- INPUT VAT (purchase vouchers) -----------------------------------

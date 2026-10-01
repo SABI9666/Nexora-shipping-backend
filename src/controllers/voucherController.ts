@@ -119,7 +119,7 @@ function parseDate(s?: string): Date | null {
   return isNaN(d.getTime()) ? null : d;
 }
 
-async function reconcileInvoiceStatuses(invoiceIds: string[]): Promise<void> {
+export async function reconcileInvoiceStatuses(invoiceIds: string[]): Promise<void> {
   const unique = Array.from(new Set(invoiceIds.filter(Boolean)));
   for (const id of unique) {
     const invoice = await prisma.invoice.findUnique({
