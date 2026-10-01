@@ -212,7 +212,7 @@ export function generateVatLedgerPdfBuffer(data: VatLedgerData): Promise<Buffer>
     // ---- OUTPUT VAT --------------------------------------------------
     if (showOutput) {
     y = ensureSpace(doc, y, 80);
-    drawSectionHeader(doc, left, y, fullW, `OUTPUT VAT  ·  Collected on sales  ·  ${data.output.rows.length} invoice${data.output.rows.length === 1 ? '' : 's'}`, EMERALD);
+    drawSectionHeader(doc, left, y, fullW, `OUTPUT VAT  ·  Collected on sales  ·  ${data.output.rows.length} entr${data.output.rows.length === 1 ? 'y' : 'ies'}`, EMERALD);
     y += 24;
 
     const oFixed = 56 + 82 + 44 + 88 + 88; // Date + Ref + Rate + Taxable + VAT
@@ -230,7 +230,9 @@ export function generateVatLedgerPdfBuffer(data: VatLedgerData): Promise<Buffer>
     } else {
       for (let i = 0; i < data.output.rows.length; i++) {
         const r = data.output.rows[i];
-        const cells = [fmtDate(r.date), r.ref, r.particulars, `${fmt(r.ratePercent)}%`, fmt(r.taxable), fmt(r.vat)];
+        // Credit notes reverse VAT — shown in brackets, accounting style.
+        const acc = (n: number) => (n < 0 ? `(${fmt(-n)})` : fmt(n));
+        const cells = [fmtDate(r.date), r.ref, r.particulars, `${fmt(r.ratePercent)}%`, acc(r.taxable), acc(r.vat)];
         const needed = measureRowH(doc, oCols, cells) + 2;
         y = ensureSpace(doc, y, needed);
         y = drawDataRow(doc, left, y, oCols, cells, i % 2 === 1, 5, EMERALD);
@@ -322,10 +324,10 @@ export function generateVatLedgerPdfBuffer(data: VatLedgerData): Promise<Buffer>
     }
 
     const footNote = variant === 'output'
-      ? 'Output VAT from sales invoices'
+      ? 'Output VAT from sales invoices less credit notes'
       : variant === 'input'
       ? 'Input VAT from purchase vouchers'
-      : 'Output VAT from sales invoices · Input VAT from purchase vouchers';
+      : 'Output VAT from sales invoices less credit notes · Input VAT from purchase vouchers';
     doc.fillColor(SUBTLE).font('Helvetica-Oblique').fontSize(8)
       .text(`Generated ${fmtDate(new Date())}  ·  ${footNote}  ·  Computer-generated statement.`,
         left, y, { width: fullW, align: 'center', lineBreak: false });

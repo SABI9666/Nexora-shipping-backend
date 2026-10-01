@@ -92,6 +92,21 @@ export const salesSummary = async (req: AuthRequest, res: Response, next: NextFu
       byCustomer[cust].amount += inv.total;
     }
 
+    // Credit notes issued in the period reduce sales.
+    const creditNoteAgg = await prisma.voucher.findMany({
+      where: {
+        ...(isAdmin ? {} : { userId: req.user!.id }),
+        type: VoucherType.CREDIT_NOTE,
+        ...dateRangeWhere('voucherDate', from, to),
+      },
+      select: { amount: true, currency: true },
+    });
+    const creditNotesByCurrency: Record<string, number> = {};
+    for (const cn of creditNoteAgg) {
+      creditNotesByCurrency[cn.currency] = (creditNotesByCurrency[cn.currency] || 0) + cn.amount;
+    }
+    const creditNoteTotal = creditNoteAgg.reduce((s, cn) => s + cn.amount, 0);
+
     const topCustomers = Object.entries(byCustomer)
       .map(([name, v]) => ({ name, count: v.count, amount: round2(v.amount) }))
       .sort((a, b) => b.amount - a.amount)
@@ -106,7 +121,11 @@ export const salesSummary = async (req: AuthRequest, res: Response, next: NextFu
           totalAmount: round2(totalAmount),
           paidAmount: round2(paidAmount),
           outstandingAmount: round2(outstandingAmount),
+          creditNoteCount: creditNoteAgg.length,
+          creditNoteAmount: round2(creditNoteTotal),
+          netSalesAmount: round2(totalAmount - creditNoteTotal),
         },
+        creditNotesByCurrency: Object.entries(creditNotesByCurrency).map(([k, v]) => ({ currency: k, amount: round2(v) })),
         byStatus: Object.entries(byStatus).map(([k, v]) => ({ status: k, count: v.count, amount: round2(v.amount) })),
         byCurrency: Object.entries(byCurrency).map(([k, v]) => ({ currency: k, count: v.count, amount: round2(v.amount) })),
         byMonth: Object.entries(byMonth).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => ({ month: k, count: v.count, amount: round2(v.amount) })),
@@ -267,17 +286,26 @@ export const outstandingReceivables = async (req: AuthRequest, res: Response, ne
           where: { voucherDate: { lte: asOf } },
           select: { id: true, amount: true, direction: true, voucherDate: true, type: true },
         },
+        voucherAllocations: {
+          select: { allocatedAmount: true, voucher: { select: { voucherDate: true } } },
+        },
       },
     });
 
     const rows = invoices.map((inv) => {
       let credit = 0;
+      let creditNotes = 0;
       let debit = 0;
       for (const v of inv.vouchers) {
-        if (v.direction === VoucherDirection.CREDIT) credit += v.amount;
-        else debit += v.amount;
+        if (v.direction === VoucherDirection.CREDIT) {
+          if (v.type === VoucherType.CREDIT_NOTE) creditNotes += v.amount; else credit += v.amount;
+        } else debit += v.amount;
       }
-      const outstanding = inv.total + debit - credit;
+      // Receipts allocated to this invoice from a multi-invoice voucher.
+      credit += inv.voucherAllocations
+        .filter((a) => !a.voucher || a.voucher.voucherDate.getTime() <= asOf.getTime())
+        .reduce((s, a) => s + a.allocatedAmount, 0);
+      const outstanding = inv.total + debit - creditNotes - credit;
       const daysOverdue = inv.dueDate
         ? Math.max(0, Math.floor((asOf.getTime() - new Date(inv.dueDate).getTime()) / (1000 * 60 * 60 * 24)))
         : 0;
@@ -290,6 +318,7 @@ export const outstandingReceivables = async (req: AuthRequest, res: Response, ne
         status: inv.status,
         currency: inv.currency,
         total: round2(inv.total),
+        creditNotes: round2(creditNotes),
         paid: round2(credit),
         adjustments: round2(debit),
         outstanding: round2(outstanding),
@@ -530,7 +559,8 @@ type CustomerStatementBuildResult = {
     invoiceCount: number;
     totalOutstanding: number;
     voucherCount: number;
-    totalReceived: number;   // credit-side vouchers
+    totalReceived: number;   // credit-side vouchers (receipts, excl. credit notes)
+    totalCreditNotes: number; // credit notes issued to the customer
     totalDebited: number;    // debit-side vouchers (e.g. debit notes)
   };
   rows: Array<{
@@ -665,9 +695,11 @@ async function buildCustomerStatement(accountId: string, asOf: Date): Promise<Cu
   });
 
   let totalReceived = 0;
+  let totalCreditNotes = 0;
   let totalDebited = 0;
   const vouchers = voucherRecords.map((v) => {
-    if (v.direction === VoucherDirection.CREDIT) totalReceived += v.amount;
+    if (v.type === VoucherType.CREDIT_NOTE) totalCreditNotes += v.amount;
+    else if (v.direction === VoucherDirection.CREDIT) totalReceived += v.amount;
     else totalDebited += v.amount;
     return {
       id: v.id,
@@ -713,6 +745,7 @@ async function buildCustomerStatement(accountId: string, asOf: Date): Promise<Cu
       totalOutstanding,
       voucherCount: vouchers.length,
       totalReceived: round2(totalReceived),
+      totalCreditNotes: round2(totalCreditNotes),
       totalDebited: round2(totalDebited),
     },
     rows,

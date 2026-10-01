@@ -18,7 +18,8 @@ import { toAed } from '../utils/aedRates';
 //   Receipt voucher    → Dr Bank/Cash         Cr Customer
 //   Payment voucher    → Dr Supplier          Cr Bank/Cash
 //   Purchase voucher   → Dr Purchases (net) + Dr Input VAT   Cr Supplier
-//   Credit note        → Dr Sales Returns     Cr Customer
+//   Credit note        → Dr Sales Returns (net) + Dr Output VAT   Cr Customer
+//                        (shown on the P&L as a deduction from Sales)
 //   Debit note         → Dr Supplier          Cr Purchase Returns
 //   Cash/Bank/Journal  → uses the voucher's account + contra account
 //
@@ -76,7 +77,7 @@ async function buildPostings(
       where: { ...scope, ...(dateCap ? { voucherDate: dateCap } : {}) },
       select: {
         id: true, voucherNumber: true, type: true, direction: true, amount: true,
-        netAmount: true, inputVatAmount: true, currency: true, voucherDate: true,
+        netAmount: true, inputVatAmount: true, outputVatAmount: true, currency: true, voucherDate: true,
         narration: true, accountId: true, contraAccountId: true,
         account: { select: { id: true, code: true, name: true, accountGroup: { select: { groupType: true } } } },
         contraAccount: { select: { id: true, code: true, name: true, accountGroup: { select: { groupType: true } } } },
@@ -154,10 +155,16 @@ async function buildPostings(
         push(v.voucherDate, party, ref, narr || 'Purchase', 0, amt);   // Cr Supplier (gross)
         break;
       }
-      case VoucherType.CREDIT_NOTE:
-        push(v.voucherDate, { ...SYS.SALESRET }, ref, narr || 'Credit note', amt, 0); // Dr Sales Returns
-        push(v.voucherDate, party, ref, narr || 'Credit note', 0, amt);               // Cr Customer
+      case VoucherType.CREDIT_NOTE: {
+        // Reverses the sale: taxable value against Sales Returns and the
+        // VAT against Output VAT, so both revenue and VAT payable drop.
+        const vat = toAed(v.outputVatAmount || 0, v.currency);
+        const net = round2(v.netAmount ? toAed(v.netAmount, v.currency) : amt - vat);
+        push(v.voucherDate, { ...SYS.SALESRET }, ref, narr || 'Credit note', net, 0);           // Dr Sales Returns (net)
+        if (vat) push(v.voucherDate, { ...SYS.OUTVAT }, ref, 'Output VAT reversed', round2(vat), 0); // Dr Output VAT
+        push(v.voucherDate, party, ref, narr || 'Credit note', 0, amt);                          // Cr Customer (gross)
         break;
+      }
       case VoucherType.DEBIT_NOTE:
         push(v.voucherDate, party, ref, narr || 'Debit note', amt, 0);                // Dr Supplier
         push(v.voucherDate, { ...SYS.PURRET }, ref, narr || 'Debit note', 0, amt);    // Cr Purchase Returns
@@ -254,9 +261,16 @@ export const profitAndLoss = async (req: AuthRequest, res: Response, next: NextF
     for (const b of balances.values()) {
       if (b.groupType !== 'PL' && b.groupType !== 'TRADING') continue;
       const net = round2(b.debit - b.credit);
+      // Sales returns / credit notes are contra-revenue: present them as a
+      // deduction under Income rather than as an expense.
+      if (b.key === SYS.SALESRET.key) {
+        if (Math.abs(net) > 0.005) income.push({ code: b.code, name: 'Less: Sales Returns / Credit Notes', amount: -net });
+        continue;
+      }
       if (net < -0.005) income.push({ code: b.code, name: b.name, amount: -net });   // credit balance → income
       else if (net > 0.005) expense.push({ code: b.code, name: b.name, amount: net }); // debit balance → expense
     }
+    // Revenue first, deductions (negative) last.
     income.sort((a, b) => b.amount - a.amount);
     expense.sort((a, b) => b.amount - a.amount);
 

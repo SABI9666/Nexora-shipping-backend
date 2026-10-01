@@ -1,6 +1,6 @@
 import { Response, NextFunction } from 'express';
 import { z } from 'zod';
-import { InvoiceStatus, Role, VoucherDirection } from '@prisma/client';
+import { InvoiceStatus, Role, VoucherDirection, VoucherType } from '@prisma/client';
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../types';
@@ -145,19 +145,24 @@ const INVOICE_DOWNLOAD_INCLUDE = {
 } as const;
 
 const PAYMENT_AGG_INCLUDE = {
-  vouchers: { select: { amount: true, direction: true } },
+  vouchers: { select: { amount: true, direction: true, type: true } },
   voucherAllocations: { select: { allocatedAmount: true } },
 } as const;
 
 type VoucherAggInput = {
   total: number;
-  vouchers?: { amount: number; direction: VoucherDirection }[];
+  vouchers?: { amount: number; direction: VoucherDirection; type: VoucherType }[];
   voucherAllocations?: { allocatedAmount: number }[];
 };
 
+// Credit notes reduce the invoice value itself; they are reported
+// separately from money received so "paid" reflects real receipts only.
 function computeBalance(inv: VoucherAggInput) {
+  const creditNotes = (inv.vouchers ?? [])
+    .filter((v) => v.direction === VoucherDirection.CREDIT && v.type === VoucherType.CREDIT_NOTE)
+    .reduce((s, v) => s + v.amount, 0);
   const credit = (inv.vouchers ?? [])
-    .filter((v) => v.direction === VoucherDirection.CREDIT)
+    .filter((v) => v.direction === VoucherDirection.CREDIT && v.type !== VoucherType.CREDIT_NOTE)
     .reduce((s, v) => s + v.amount, 0);
   const debit = (inv.vouchers ?? [])
     .filter((v) => v.direction === VoucherDirection.DEBIT)
@@ -166,11 +171,12 @@ function computeBalance(inv: VoucherAggInput) {
     .reduce((s, a) => s + a.allocatedAmount, 0);
   const paid = round2(credit + allocated);
   const adjustments = round2(debit);
-  const outstanding = round2(inv.total + debit - credit - allocated);
-  const paidPercent = inv.total > 0
-    ? Math.max(0, Math.min(100, Math.round(((credit + allocated) / inv.total) * 100)))
-    : 0;
-  return { paid, adjustments, outstanding, paidPercent };
+  const netTotal = round2(inv.total - creditNotes);
+  const outstanding = round2(inv.total + debit - creditNotes - credit - allocated);
+  const paidPercent = netTotal > 0
+    ? Math.max(0, Math.min(100, Math.round(((credit + allocated) / netTotal) * 100)))
+    : (creditNotes > 0 ? 100 : 0);
+  return { paid, adjustments, creditNotes: round2(creditNotes), netTotal, outstanding, paidPercent };
 }
 
 export const createInvoice = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {

@@ -1,10 +1,11 @@
 import { Response, NextFunction } from 'express';
-import { VoucherType, VoucherDirection, Role } from '@prisma/client';
+import { VoucherType, VoucherDirection, Role, InvoiceStatus } from '@prisma/client';
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../types';
 import { generateJobProfitPdfBuffer, JobProfitData } from '../utils/jobProfitPdf';
 import { AED_RATES, toAed } from '../utils/aedRates';
+import { creditNoteSplit, isCreditNote } from '../utils/creditNotes';
 
 // Job Profit is always reported in AED (the company's functional currency).
 // Each row keeps its original document currency figures for reference and
@@ -38,9 +39,15 @@ async function buildJobProfit(orderId: string, userId: string, isAdmin: boolean)
   });
 
   const invoices = await prisma.invoice.findMany({
-    where: { orderId },
+    // Cancelled invoices are void — they are not sales.
+    where: { orderId, status: { not: InvoiceStatus.CANCELLED } },
     include: {
-      vouchers: { select: { amount: true, direction: true, currency: true } },
+      vouchers: {
+        select: {
+          voucherNumber: true, type: true, amount: true, direction: true, currency: true,
+          netAmount: true, outputVatAmount: true,
+        },
+      },
       voucherAllocations: { select: { allocatedAmount: true } },
     },
     orderBy: { invoiceDate: 'asc' },
@@ -85,35 +92,53 @@ async function buildJobProfit(orderId: string, userId: string, isAdmin: boolean)
   const salesRows = invoices.map((i) => {
     const currency = (i.currency || BASE_CURRENCY).toUpperCase();
     const rate = rateOf(currency);
-    // Receipts / credit notes may be booked in a different currency to the
-    // invoice — bring each to AED first, then express in invoice currency.
-    const creditsAed = i.vouchers
-      .filter((v) => v.direction === VoucherDirection.CREDIT)
+    const credits = i.vouchers.filter((v) => v.direction === VoucherDirection.CREDIT);
+    // Credit notes reduce the sale itself (net + output VAT); they are not
+    // money received. Converted to the invoice currency via AED in case one
+    // was booked in a different currency.
+    const cnNotes = credits.filter(isCreditNote);
+    const cnInInvCur = (f: (v: (typeof cnNotes)[number]) => number) =>
+      r2(cnNotes.reduce((s, v) => s + toAed(f(v), v.currency), 0) / rate);
+    const cnGross = cnInInvCur((v) => creditNoteSplit(v).gross);
+    const cnNet = cnInInvCur((v) => creditNoteSplit(v).net);
+    const cnVat = cnInInvCur((v) => creditNoteSplit(v).vat);
+    // Receipts may also be booked in a different currency to the invoice —
+    // bring each to AED first, then express in invoice currency.
+    const receiptsAed = credits
+      .filter((v) => !isCreditNote(v))
       .reduce((s, v) => s + toAed(v.amount, v.currency), 0);
     const allocated = i.voucherAllocations.reduce((s, a) => s + a.allocatedAmount, 0);
-    const paidAed = r2(creditsAed + toAed(allocated, currency));
+    const paidAed = r2(receiptsAed + toAed(allocated, currency));
     const paid = r2(paidAed / rate);
     // Output VAT (the tax collected from the customer) sits in the
     // taxAmount column on the Invoice — pulled out so profit is computed
     // on the net (taxable) sale.
-    const outputVat = r2(i.taxAmount || 0);
-    const net = r2(i.subtotal ?? (i.total - outputVat));
-    const totalAed = r2(toAed(i.total, currency));
+    const invoiceVat = r2(i.taxAmount || 0);
+    const invoiceNet = r2(i.subtotal ?? (i.total - invoiceVat));
+    const net = r2(invoiceNet - cnNet);
+    const vat = r2(invoiceVat - cnVat);
+    const total = r2(i.total - cnGross);
+    const totalAed = r2(toAed(total, currency));
     return {
       invoiceNumber: i.invoiceNumber,
       invoiceDate: i.invoiceDate,
       billToName: i.billToName,
-      // Original document currency
+      // Original document currency. total / net / vat are AFTER credit notes.
       currency,
       exchangeRate: rate,
+      invoiceTotal: r2(i.total),
+      creditNote: cnGross,
+      creditNoteNumbers: cnNotes.map((v) => v.voucherNumber),
       net,
-      vat: outputVat,
-      total: i.total,
+      vat,
+      total,
       paid,
-      outstanding: r2(i.total - paid),
+      outstanding: r2(total - paid),
       // AED equivalents
+      invoiceTotalAed: r2(toAed(i.total, currency)),
+      creditNoteAed: r2(toAed(cnGross, currency)),
       netAed: r2(toAed(net, currency)),
-      vatAed: r2(toAed(outputVat, currency)),
+      vatAed: r2(toAed(vat, currency)),
       totalAed,
       paidAed,
       outstandingAed: r2(totalAed - paidAed),
@@ -132,7 +157,9 @@ async function buildJobProfit(orderId: string, userId: string, isAdmin: boolean)
   const totalPurchaseOutstanding = r2(totalPurchase - totalPurchasePaid);
   const totalSalesNet = sum(salesRows, (r) => r.netAed);
   const totalSalesVat = sum(salesRows, (r) => r.vatAed);
-  const totalSales = sum(salesRows, (r) => r.totalAed);
+  const totalSalesInvoiced = sum(salesRows, (r) => r.invoiceTotalAed);
+  const totalCreditNotes = sum(salesRows, (r) => r.creditNoteAed);
+  const totalSales = sum(salesRows, (r) => r.totalAed); // after credit notes
   const totalSalesPaid = sum(salesRows, (r) => r.paidAed);
   const totalOutstanding = sum(salesRows, (r) => r.outstandingAed);
   const netProfit = r2(totalSalesNet - totalPurchaseNet);
@@ -165,6 +192,7 @@ async function buildJobProfit(orderId: string, userId: string, isAdmin: boolean)
     totals: {
       totalPurchase, totalPurchaseNet, totalPurchaseVat,
       totalPurchasePaid, totalPurchaseOutstanding,
+      totalSalesInvoiced, totalCreditNotes,
       totalSales, totalSalesNet, totalSalesVat, totalSalesPaid,
       netProfit, profitMargin, vatNetPosition, totalOutstanding,
     },
