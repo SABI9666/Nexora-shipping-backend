@@ -8,6 +8,7 @@ import {
   deleteInvoice,
   downloadInvoiceWord,
   downloadInvoicePdf,
+  lastBillTo,
 } from '../controllers/invoiceController';
 import { listCreditNotes, createCreditNote, creditNotePdf } from '../controllers/creditNoteController';
 
@@ -17,6 +18,7 @@ router.use(authenticate);
 
 router.get('/', getInvoices);
 router.post('/', createInvoice);
+router.get('/bill-to', lastBillTo);
 router.get('/:id/download/word', downloadInvoiceWord);
 router.get('/:id/download/pdf', downloadInvoicePdf);
 // Credit notes — reduce an invoice after a dispute / agreed adjustment.

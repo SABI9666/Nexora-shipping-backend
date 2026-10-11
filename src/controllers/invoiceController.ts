@@ -179,6 +179,85 @@ function computeBalance(inv: VoucherAggInput) {
   return { paid, adjustments, creditNotes: round2(creditNotes), netTotal, outstanding, paidPercent };
 }
 
+// ---------------------------------------------------------------------------
+// Customer bill-to memory.
+//
+// The invoice form fills Bill To from the customer's Account Master record.
+// When that record has no address yet, whatever the user types on the
+// invoice is saved back to the account (blank fields only — existing
+// master data is never overwritten), so the next invoice for the same
+// customer fills in automatically.
+// ---------------------------------------------------------------------------
+type BillTo = {
+  billToName?: string;
+  billToAddress?: string;
+  billToCity?: string;
+  billToEmail?: string | null;
+  billToPhone?: string | null;
+};
+
+// Link to an existing customer account by exact (case-insensitive) name
+// when the user typed the name instead of picking the account.
+async function findAccountIdByName(name?: string): Promise<string | null> {
+  const n = name?.trim();
+  if (!n) return null;
+  const matches = await prisma.account.findMany({
+    where: { name: { equals: n, mode: 'insensitive' } },
+    select: { id: true },
+    take: 2,
+  });
+  // Ambiguous names are left unlinked rather than guessed.
+  return matches.length === 1 ? matches[0].id : null;
+}
+
+async function rememberBillTo(accountId: string | null, b: BillTo): Promise<void> {
+  if (!accountId) return;
+  try {
+    const acc = await prisma.account.findUnique({
+      where: { id: accountId },
+      select: { address: true, deliveryAddress: true, place: true, email: true, financeEmail: true, phone1: true, mobile1: true },
+    });
+    if (!acc) return;
+    const patch: Record<string, string> = {};
+    if (!acc.address?.trim() && !acc.deliveryAddress?.trim() && b.billToAddress?.trim()) patch.address = b.billToAddress.trim();
+    if (!acc.place?.trim() && b.billToCity?.trim()) patch.place = b.billToCity.trim();
+    if (!acc.email?.trim() && !acc.financeEmail?.trim() && b.billToEmail?.trim()) patch.email = b.billToEmail.trim();
+    if (!acc.mobile1?.trim() && !acc.phone1?.trim() && b.billToPhone?.trim()) patch.mobile1 = b.billToPhone.trim();
+    if (Object.keys(patch).length) await prisma.account.update({ where: { id: accountId }, data: patch });
+  } catch {
+    // Best-effort convenience — never fail the invoice save over it.
+  }
+}
+
+// GET /invoices/bill-to?accountId=&name=
+// Bill-to details from the customer's most recent invoice, used by the
+// invoice form when the Account Master record has no address yet.
+export const lastBillTo = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const accountId = (req.query.accountId as string | undefined) || undefined;
+    const name = (req.query.name as string | undefined)?.trim() || undefined;
+    if (!accountId && !name) throw new AppError('accountId or name is required', 400);
+    const isAdmin = req.user!.role === Role.ADMIN;
+    const last = await prisma.invoice.findFirst({
+      where: {
+        ...(isAdmin ? {} : { userId: req.user!.id }),
+        OR: [
+          ...(accountId ? [{ accountId }] : []),
+          ...(name ? [{ billToName: { equals: name, mode: 'insensitive' as const } }] : []),
+        ],
+      },
+      orderBy: { invoiceDate: 'desc' },
+      select: {
+        invoiceNumber: true, billToName: true, billToAddress: true, billToCity: true,
+        billToCountry: true, billToEmail: true, billToPhone: true,
+      },
+    });
+    res.json({ success: true, data: last });
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const createInvoice = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const data = createInvoiceSchema.parse(req.body);
@@ -194,7 +273,7 @@ export const createInvoice = async (req: AuthRequest, res: Response, next: NextF
       linkedOrderNumber = order.orderNumber;
     }
 
-    const accountId = data.accountId || null;
+    const accountId = data.accountId || await findAccountIdByName(data.billToName);
     if (accountId) {
       const acc = await prisma.account.findUnique({ where: { id: accountId } });
       if (!acc) throw new AppError('Customer account not found', 404);
@@ -282,6 +361,8 @@ export const createInvoice = async (req: AuthRequest, res: Response, next: NextF
         throw e;
       }
     }
+
+    await rememberBillTo(accountId, data);
 
     res.status(201).json({ success: true, message: 'Invoice created', data: invoice });
   } catch (error) {
@@ -445,6 +526,10 @@ export const updateInvoice = async (req: AuthRequest, res: Response, next: NextF
       },
       include: INVOICE_INCLUDE,
     });
+
+    if (data.billToAddress || data.billToCity || data.billToEmail || data.billToPhone) {
+      await rememberBillTo(updated.accountId, data);
+    }
 
     res.json({ success: true, message: 'Invoice updated', data: updated });
   } catch (error) {
